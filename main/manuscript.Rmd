@@ -817,12 +817,11 @@ net.dyn %v% "vertex.sides" <- vertex$shapes
 
 # If the video file is present do not
 # render it again.
-# To force rendering of the video
-# delete the file "./data/netwrok_movie.mp4"
-# or set render.video to TRUE
-video.file <- "./data/netwrok_movie.mp4"
+# To force the rendering of the video
+# set render.video to TRUE
+video.file <- "./data/network_movie.mp4"
 render.video <- F
-if(!file.exists(video.file) | render.video){
+if(render.video){
   saveVideo({
     render.animation(net.dyn,
                      displaylabels=FALSE,
