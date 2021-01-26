@@ -1,0 +1,1517 @@
+---
+title: "Defining the resilience of the human salivary microbiota by a 520 days longitudinal study in confined environment: the Mars500 mission"
+author: 
+  - Giovanni Bacci^1^
+  - Alessio Mengoni^1^
+  - Giovanni Emiliani^2^
+  - Carolina Chiellini^3^
+  - Edoardo Giovanni Cipriani^1^
+  - Giovanna Bianconi^4^
+  - Francesco Canganella^4,5^
+  - Renato Fani^1^
+output: 
+ html_document
+pandoc_args: ["--smart"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE,
+                      message = FALSE,
+                      dev = "png")
+knitr::read_chunk("data/diversity_estimation.R")
+knitr::read_chunk("../SM/supplementary.Rmd")
+knitr::read_chunk('../SM/data/cp/changepoint_and_ga.R')
+knitr::read_chunk('data/expPlan.R')
+
+pander::panderOptions("missing", "-")
+pander::panderOptions("table.alignment.default", "left")
+knitr::opts_chunk$set(fig.path='img/')
+
+source("../SM/utils.R")
+source("../SM/data/enrichment.R")
+```
+
+```{r loadLibraries, include=FALSE}
+suppressPackageStartupMessages({
+  library(phyloseq)
+  library(vegan)
+  library(tidyverse)
+  library(reshape2)
+  library(betapart)
+  library(purrr)
+  library(forcats)
+  library(ggsci)
+  library(cowplot)
+  library(papaja)
+  library(xlsx)
+  library(DESeq2)
+  library(adespatial)
+  library(ggbeeswarm)
+  library(patchwork)
+  library(tsna)
+  library(ggnetwork)
+  library(network)
+  library(networkDynamic)
+  library(ndtv)
+  library(grid)
+})
+```
+
+^1^Department of Biology, University of Florence, Via Madonna del Piano 6, I-50019 Sesto Fiorentino, Italy  
+^2^Istituto per la Protezione Sostenibile delle Piante, Consiglio Nazionale delle Ricerche, via Madonna del Piano 10, I-50019 Sesto Fiorentino, Italy  
+^3^Department of Agriculture, Food and Environment, University of Pisa, Via del Borghetto 80, I-56124 Pisa, Italy  
+^4^Department of Biological, Agricultural and Forestry Sciences, Università della Tuscia, Via San Camillo de Lellis snc, I-01100 Viterbo, Italy  
+^5^Embassy of Italy, 98 Hannam-daero, Hannam-dong, Yongsan-gu, Seoul, South Korea
+\newpage
+
+
+```{r loadingData}
+# loading phyloseq (generated in supplementary materials)
+data <- readRDS("../SM/data/phylo_obj.rds")
+
+f <- filterfun_sample(function(x) any(x > 0))
+data <- filter_taxa(data, f, T)
+
+num.seq <- sample_sums(data)
+num.taxa <- transform_sample_counts(data, sign) %>%
+  sample_sums()
+
+good <- read.xlsx2("../SM/tab/Table_S5.xlsx", 1, startRow = 1)
+good$Good_coverage_estimator <- as.numeric(as.character(good$Good_coverage_estimator))
+goods_range <- range(good$Good_coverage_estimator)
+
+accuracy <- readRDS("../SM/tab/Table_S3.rds")
+cor.range <- range(accuracy$rho)
+
+sample_data(data) <- sample_data(data) %>%
+  data.frame(check.names = F) %>%
+  mutate_at("food", ~fct_relevel(., c("first variant", "third variant", "normal"))) %>%
+  mutate_at("food", ~fct_recode(., FV = "first variant", 
+                                TV = "third variant", 
+                                NR = "normal")) %>%
+  mutate_at("collection_date", ~factor(as.Date(.))) %>%
+  `rownames<-` (sample_names(data)) %>%
+  sample_data()
+```
+
+```{r sampleResults}
+table.1 <- sample_data(data) %>%
+  group_by(food, subject_id) %>%
+  tally() %>%
+  spread(food, n) %>%
+  mutate(Total = rowSums(.[,-1]))
+  
+colnames(table.1) <- c("Subject", 
+                       "Earth to Mars\n(First Variant)", 
+                       "Mars to Earth\n(Third Variant)", 
+                       "Follow-up\n(Normal Diet)",
+                       "Total")
+table.1 <- rbind(table.1, colSums(table.1)) %>%
+  mutate_at("Subject", as.character)
+table.1[7,1] <- "Total"
+```
+
+```{r, expPlan}
+```
+
+```{r alphaAnalysis}
+# Barplot of bacterial classes. ASV with a relative abundace lower than
+# 5% (0.05) in all samples were collapsed into a single group called
+# "Other"
+p <- barTaxa(data, tax.level = "class", cutoff = 0.05, rel = T, DF = F,
+             other.col = "gray30")
+p$mapping <- aes(x = collection_date, y = Abundance)
+
+figure.1b <- p + facet_grid(subject_id ~ food, space = "free", scale  = "free_x") +
+  theme_minimal(base_family = "Helvetica", base_size = 8,
+                base_line_size = pt2ggSize(.5)) +
+  theme_publication(grid = F) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5),
+        legend.key.height = unit(.4, "lines"),
+        legend.key.width = unit(1, "lines"),
+        legend.title = element_blank(),
+        legend.background = element_blank(),
+        # legend.justification = c(0,1),
+        panel.spacing.y = unit(.7, "lines"),
+        panel.grid = element_blank()) +
+  guides(fill = guide_legend(ncol = 2)) +
+  xlab("Sampling date") +
+  ylab("Abundance (%)")
+
+# Reading table S6
+table.s6 <- readRDS("../SM/tab/Table_S6.rds")
+
+# Top phyla
+top <- 5
+top.taxa <- table.s6 %>%
+  mutate(ord = rev(row_number())) %>%
+  top_n(top) %>%
+  pull("phylum") %>%
+  as.character()
+
+top.perc <- table.s6 %>%
+  mutate(ord = rev(row_number())) %>%
+  top_n(top) %>%
+  pull("Percentage") %>%
+  sum
+
+top.taxa <- paste0(
+  paste0(top.taxa[-length(top.taxa)], collapse = ", "),
+  ", and ", top.taxa[length(top.taxa)]
+)
+
+
+# Table S7 e S8: nothing significant
+X <- otu_table(data)
+line.col <- "black"
+
+# alpha diversity
+div <- sample_data(data) %>%
+  as("data.frame") %>%
+  mutate(invsimpson = diversity(X, index = "invsimpson"),
+         richness = specnumber(X),
+         subject_id = factor(subject_id))
+
+# theme for all plots
+theme_all <- theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication()
+y.lab <- "Inverse Simpson index"
+
+# Diversity between experiment
+figure.1c <- ggplot(div, aes(x = experiment, y = invsimpson)) +
+  geom_boxplot() +
+  theme_all +
+  scale_fill_npg() +
+  xlab("Isolation/Post-isolation") +
+  ylab(y.lab) +
+  theme(plot.margin = unit(c(0.5, 0.5, 0.3, 1.2), "lines"))
+
+# Diversity between diets
+figure.1d <- ggplot(div, aes(x = food, y = invsimpson)) +
+  geom_boxplot() +
+  theme_all +
+  xlab("Diet") +
+  ylab(y.lab) +
+  theme(plot.margin = unit(c(0.5, 0.5, 0.3, 1.1), "lines"))
+
+# Diversity between subjects
+figure.1e <- ggplot(div, aes(x = subject_id, y = invsimpson)) +
+  geom_boxplot() +
+  theme_all +
+  xlab("Subject") +
+  ylab(y.lab) +
+  theme(plot.margin = unit(c(0.5, 0.5, 0.2, 1.2), "lines"))
+
+table.s8 <- readRDS("../SM/tab/Table_S8.rds")
+coefs <- coef(summary(table.s8))[,1]
+# Diversity along days
+figure.1f <- ggplot(div, aes(x = days, y = invsimpson)) +
+  # Values of slope and intercept were taken from Table S8
+  geom_abline(slope = coefs[2], intercept = coefs[1], color = "red",
+              size = pt2ggSize(.5)) +
+  stat_summary(geom = "errorbar", fun.data = mean_cl_boot, 
+               color = line.col, size = pt2ggSize(.6),
+               show.legend = F) +
+  stat_summary(geom = "point", fun.y = mean, shape = 21, 
+               size = pt2ggSize(3), color = line.col, fill = "white") +
+  theme_all +
+  theme(legend.title = element_blank(),
+        plot.margin = unit(c(0.5, 0.5, 0.2, 1.1), "lines")) +
+  xlab("Days") +
+  ylab(y.lab)
+
+# Plotting
+p2 <- plot_grid(figure.1c, figure.1d, figure.1e, figure.1f, 
+                ncol = 1, labels = letters[3:6], 
+                label_fontfamily = "Helvetica",
+                label_size = 10)
+lower <- plot_grid(figure.1b, p2, ncol = 2, labels = c("b",""),
+                      label_fontfamily = "Helvetica",
+                      label_size = 10)
+figure.1 <- plot_grid(figure.1a, lower, ncol = 1, labels = c("a",""),
+                      label_fontfamily = "Helvetica",
+                      label_size = 10, rel_heights = c(1.3, 3))
+
+table.s7 <- readRDS("../SM/tab/Table_S7.rds")
+table.s7 <- apa_print(table.s7)
+```
+
+```{r diversityEst}
+# Saving the original object
+mars500 <- data
+
+# Filtering out ASVs based on the number of samples
+# with an abundance higher than 0 (persistence) and
+# the number of reads mapped (abundance)
+persistence <- transform_sample_counts(data, sign) %>%
+  taxa_sums()
+abundance <- taxa_sums(data)
+
+# Lower bound cutoffs.
+# pers.cut : persistence cutoff (keep in more than)
+# ab.cut : abundance cutoff (keep in more than)
+pers.perc <- 0.05
+pers.cut <- nsamples(data)*pers.perc
+ab.cut <- 10
+
+extr <- !(persistence < pers.cut & abundance < ab.cut)
+
+# Normalization with DESeq2: divide the counts by the size 
+# factors or normalization factors computed with the 
+# "estimateSizeFactors" function
+data.mod <- prune_taxa(extr, data)
+X <- data.frame(t(otu_table(data.mod)), check.names = F)
+meta <- sample_data(data) %>%
+  data.frame()
+meta$subject_id <- factor(meta$subject_id)
+
+dds <- suppressMessages(
+  DESeqDataSetFromMatrix(X, meta, design = ~ days + food + subject_id)
+  )
+dds <- estimateSizeFactors(dds, type = "poscounts")
+
+X <- t(counts(dds, norm = T))
+X <- sqrt(wisconsin(X))
+
+
+# List of beta diversities:
+#  uf = unweighted unifrac (qualitative)
+#  sor = sorensen index (qualitative)
+#  wuf = weighted unifrac (quantitative)
+#  bray = bray-curtis index (quantitative)
+otu_table(data.mod) <- otu_table(X, taxa_are_rows = F)
+beta.div <- list(
+  uf = UniFrac(data.mod, weighted = F, normalized = T),
+  sor = betadiver(X %>% data.frame(),
+                  method = "t"),
+  
+  wuf = UniFrac(data.mod, weighted = T, normalized = T),
+  bray = vegdist(X %>% data.frame(),
+                 method = "bray")
+)
+
+# disp.res = results of betadisper function for each
+#            beta diversity index considered
+#
+# The dispersion between each grouping factor included
+# in the adonis model is homogeneous. Adonis is
+# correct in this case.
+d <- as(sample_data(data.mod), "data.frame") %>% 
+  select(days, food, subject_id)
+disp.res <- beta.div %>% map_df(function(b){
+  suppressWarnings({
+    res <- as.list(d) %>%
+      map(~betadisper(d = b, group = .)) %>%
+      map(anova) %>%
+      map(apa_print) %>%
+      map_df("table", .id = "type") %>%
+      select(-Effect) %>%
+      dplyr::rename(Effect = "type")
+  })
+}, .id = "Index") %>%
+  mutate(p.adj = p.adjust(p, "BH"))
+
+toReplace <- str_replace(printnum(disp.res$p.adj, digits = 3), "0\\.", "\\.")
+
+disp.lab <- beta.div %>% 
+  map_df(function(b){
+    suppressWarnings({
+      res <- as.list(d) %>%
+        map(~betadisper(d = b, group = .)) %>%
+        map(anova) %>%
+        map(apa_print, mse = F) %>%
+        map("statistic") %>%
+        map_chr("Groups")
+      data.frame(Effect = names(res),
+                 label = res)
+    })
+  }, .id = "index")
+disp.lab$label <- gsub("[\\$]", "", disp.lab$label)
+disp.lab$label <- str_replace(disp.lab$label, "\\.[0-9]+$", toReplace)
+
+disp.lab <- disp.lab %>% group_by(index) %>%
+  mutate(Effect = fct_recode(Effect, Diet = "food",
+                             Subject = "subject_id", Days = "days")) %>%
+  summarise(lab = paste(Effect, label, sep = ": ", collapse = "\n")) %>%
+  mutate(lab = gsub("[\\$]", "", lab))
+
+
+# Adonis for all beta diversity indexes
+set.seed(123)
+beta.adonis <- beta.div %>% map(~adonis2(.x ~ days + food + subject_id,
+                                          data = sample_data(data.mod) %>% data.frame(),
+                                          permutations = 1000)) %>%
+  map(`[`, c("R2", "Pr(>F)")) %>% # Extract R2 and p.value
+  data.frame(check.names = F) %>%
+  rownames_to_column(var = "factor") %>% # Add rowname variable
+  gather("key", "value", -factor) %>% # Melting data frame
+  mutate(index = gsub("^(.*)\\.(.*)$", "\\1", key), # Transforming for plotting purpuses
+         key = gsub("^(.*)\\.(.*)$", "\\2", key)) %>%
+  spread(key, value) %>% # Cast into a single table
+  subset(!factor %in% c("Residual", "Total")) %>%
+  select(index, factor, R2, `Pr(>F)`) %>%
+  dplyr::rename(p.value = `Pr(>F)`) %>%
+  mutate(index = factor(index, levels = c("sor", "uf", "bray", "wuf")),
+         adj.p.value = p.adjust(p.value, "BH")) %>%
+  arrange(index)
+
+# Adding significance
+beta.adonis$s <- symnum(beta.adonis$adj.p.value,
+                        cutpoints = c(0, 0.01, 0.05, 1),
+                        symbols = c("**", "*", ""))
+
+# Final refinement
+beta.adonis <- beta.adonis %>%
+  mutate(type = rep(c("Qualitative", "Quantitative"), each = 6),
+         index = lvls_revalue(index, c("Sorensen index",
+                                       "Unweighted unifrac",
+                                       "Bray-Curtis index",
+                                       "Weighted unifrac"))) %>%
+  mutate(factor = fct_recode(factor, Days = "days", Diet = "food", Subject = "subject_id"))
+# Plot R2
+a <- ggplot(beta.adonis, aes(x = index, y = R2, fill = factor)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = s), angle = 90, vjust = 1.2,
+            position = position_dodge(width = .9)) +
+  coord_flip(ylim = c(0, 0.12)) +
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_discrete(labels = function(x) gsub('\\s','\n', x),
+                   expand = c(0, 0.1)) +
+  theme_minimal(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F, axis.line = T) +
+  theme(axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        panel.spacing = unit(1.5, "lines"),
+        legend.title = element_blank(),
+        legend.text = element_text(margin = margin(l = -.5, r = .5, 
+                                                   unit = "lines")),
+        legend.key.height = unit(.6, "lines")) +
+  facet_grid(type ~ ., scales = "free_y", space = "free") +
+  scale_fill_aaas(alpha = .7)
+
+# Make ordinations
+ords <- lapply(seq_along(beta.div), function(i){
+  ord <- metaMDS(beta.div[[i]], try = 300, autotransform = F, trace = F)
+  plot_ordination(data, ord, justDF = T) %>%
+    mutate(index = names(beta.div)[i])
+}) %>% bind_rows() %>%
+  left_join(disp.lab, by = "index") %>%
+  mutate(index = factor(index, levels = c("sor", "uf", "bray", "wuf"))) %>%
+  mutate(index = lvls_revalue(index, c("Sorensen index",
+                                       "Unweighted unifrac",
+                                       "Bray-Curtis index",
+                                       "Weighted unifrac")))
+
+# Plot ordinations
+b <- ords %>%
+  mutate(food = fct_relevel(food, "NR", after = 2)) %>%
+  ggplot(aes(x = NMDS1, y = NMDS2)) +
+  geom_hline(yintercept = 0, size = pt2ggSize(.5),
+             linetype = 2) +
+  geom_vline(xintercept = 0, size = pt2ggSize(.5),
+             linetype = 2) +
+  geom_point(aes(color = factor(subject_id),
+                 shape = food),
+             stroke=pt2ggSize(1.8),
+             size=pt2ggSize(2)) +
+  scale_shape_manual("Diet", values = c(1, 5, 4)) +
+  scale_color_npg(name= "Subject") +
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  theme(legend.box = "vertical") +
+  facet_wrap(index ~ lab, scales = "free") +
+  scale_x_continuous(breaks = scales::pretty_breaks(3)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(3)) +
+  guides(shape = guide_legend(override.aes = list(size = 2)),
+         color = guide_legend(override.aes = list(size = 2))) +
+  theme(strip.text = element_text(vjust = .5, hjust = 0,
+                                  margin = margin(0,0,0,0, "lines")))
+
+grobs <- ggplotGrob(b)
+for(i in 22:25){
+ grobs$grobs[[i]]$heights[1] <- unit(.8,"lines")
+ grobs$grobs[[i]]$grobs[[2]]$children[[2]]$children[[1]]$gp$fontsize <- 6
+}
+
+# Assembling figure 2
+figure.2 <- plot_grid(grobs, a + theme(plot.margin = unit(c(1.5,.2, 2.5, .2), "lines")),
+          labels = letters[1:2], rel_widths = c(3/5, 2/5),
+          label_fontfamily = "Helvetica", label_size = 10)
+```
+
+```{r explainCP, fig.width=6, fig.height=1.5}
+# Scheme of within and between sample diversity
+# (panel"a" and "b" of figure 3)
+
+# Getting data only of the first 3 subjects and for 4 time points
+# (just to simplify everithing)
+data.reduced <- subset_samples(data, subject_id < 5004 & days < 100)
+sbj <- as.numeric(factor(sample_data(data.reduced)$subject_id))
+days <- as.numeric(factor(sample_data(data.reduced)$days))
+
+# Building between and within samples data frame
+# (yend parameter is correct to avoid overlaps
+# between arrows and points)
+between <- expand.grid(sbj, sbj, days) %>% 
+  setNames(c("subject_id", "yend", "days"))
+
+within <- between %>% 
+  filter(subject_id != yend) %>%
+  unique() %>%
+  mutate(yend = ifelse(subject_id > yend, yend + 0.15, yend - 0.15))
+
+between <- between %>% 
+  filter(subject_id == yend) %>%
+  filter(days < 4) %>%
+  unique()
+
+# Builidng plot
+arrow <- arrow(length = unit(0.15,"cm"))
+pp <- sample_data(data.reduced) %>% data.frame() %>%
+  mutate_at(c("days","subject_id"), as.factor) %>%
+  mutate_at(c("days","subject_id"), as.numeric) %>%
+ggplot(aes(x = days, y = subject_id)) +
+  # within curves
+  geom_curve(data = within, aes(yend = yend, xend = days),
+             arrow = arrow,
+             curvature = .6, angle = 30, size = pt2ggSize(.8),
+             color = "gray60", linetype = 1) +
+  # between segments
+  geom_segment(data = between,
+               aes(yend = subject_id, xend = days + 0.75),
+               arrow = arrow,
+               color = "black") +
+  # sampling points
+  geom_point(aes(fill = as.factor(subject_id)), 
+             shape = 21, size = pt2ggSize(5)) +
+  # Adjusting themes
+  theme_minimal(base_family = "Helvetica", base_size = 8) +
+  theme_publication(grid = F) +
+  theme(axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "none",
+        axis.title = element_blank()) +
+  scale_x_continuous(expand = c(0, 0), limits = c(.5, 7), breaks = 1:4,
+                     labels = function(x) paste0("T", x)) +
+  scale_fill_npg() +
+  annotate(geom = "segment", x = 4.4, xend = 4.8, y = 2.9, yend = 2.9,
+           arrow = arrow, color = "black") +
+  annotate(geom = "segment", x = 4.4, xend = 4.8, y = 2.6, yend = 2.6,
+           arrow = arrow, color = "gray60") +
+  annotate(geom = "text", x = 4.8, y = 2.9, label = "within-subject",
+           arrow = arrow, size = pt2ggSize(6), hjust = -.1) +
+  annotate(geom = "text", x = 4.8, y = 2.6, label = "between-subjects",
+           arrow = arrow, size = pt2ggSize(6), hjust = -.1) +
+  
+  # Point legend
+  annotate(geom = "point", x = 4.9, y = c(1.6, 1.8, 2), 
+           shape = 21, fill = pal_npg()(10)[1:3], size = pt2ggSize(3)) +
+    annotate(geom = "text", x = 4.9, y = 1.84, label = "]",
+           size = pt2ggSize(12), hjust = -.8) +
+  annotate(geom = "text", x = 4.9, y = 1.8, label = "crewmembers",
+           size = pt2ggSize(6), hjust = -.2)
+
+## Change point detetcion scheme
+getData <- function(n, cp = 1, skew = .1){
+  # Function for example data generation
+  # n : n*cp = number of points to generate
+  # cp : number of changepoints
+  # skew : skew of the data
+  s <- seq(0, 1, length.out = n)
+  s <- sapply(1:(cp+1), function(i){
+    if(i %% 2 > 0)
+      return(s)
+    rev(s)
+  })
+  sapply(s, rnorm, n = 1, sd = skew)
+}
+
+# Number of subjects
+n.subject <- 3
+# Getting data
+y <- 1:n.subject %>% 
+  map(~getData(n = 30, cp = 2, skew = .5)) %>%
+  unlist()
+subject <- cut(seq_along(y), n.subject, labels = F)
+
+# Building data frame
+d <- data.frame(subject = subject, y = y) %>%
+  group_by(subject) %>%
+  mutate(Time = 1:n())
+
+# Segments for simulating modelling
+segments <- data.frame(x = c(1, 30, 60),
+           xend = c(30, 60, 90)) %>%
+  group_by(x) %>%
+  mutate(y = mean(d$y[d$Time == x])) %>%
+  group_by(xend) %>%
+  mutate(yend = mean(d$y[d$Time == xend]))
+
+# Same theme for all plots
+t <- theme_bw(base_family = "Helvetica", base_size = 8) +
+  theme_publication(grid = F) +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.position = "none",
+        plot.margin = unit(c(.2,.2,.2,.2), "lines"),
+        plot.title = element_text(size = pt2ggSize(16),
+                                  vjust = -.2, face = "plain",
+                                  hjust = 0))
+
+# Building plots
+p1 <- ggplot(d, aes(x = Time, y = y, group = subject)) +
+  geom_line(aes(color = as.factor(subject)), size = pt2ggSize(.5)) +
+  t + scale_x_continuous(expand = c(0,0)) + scale_fill_npg()
+p2 <- p1 + geom_vline(xintercept = c(10, 30, 45, 60, 78),
+                linetype = 2, size = pt2ggSize(.7)) +
+  ggtitle("CP detection")
+p3 <- p1 + geom_vline(xintercept = c(30, 60),
+                linetype = 2, size = pt2ggSize(.7)) +
+  ggtitle("GA optimitazion")
+p4 <- p1 + geom_vline(xintercept = c(30, 60),
+                linetype = 2, size = pt2ggSize(.7)) +
+  geom_segment(data = segments, aes(x = x, xend = xend, 
+                                    y = y, yend = yend),
+               inherit.aes = F, size = pt2ggSize(1)) +
+  ggtitle("Modelling")
+
+# Putting all togheter
+p5 <- ggdraw() +
+  draw_plot(p1 + ggtitle("Time series"), 
+            0, .5, .48, .5) +
+  draw_plot(p2, .52, .5, .48, .5) +
+  draw_line(x = c(.48, .52), y = c(.7, .7),
+            arrow = arrow) +
+  draw_plot(p4, 0, 0, .48, .5) +
+  draw_plot(p3, .52, 0, .48, .5) +
+  draw_line(x = c(.52, .48), y = c(.2, .2),
+            arrow = arrow) +
+  draw_line(x = c(.85, .85), y = c(.5, .4),
+            arrow = arrow)
+p5 <- plot_grid(ggdraw(), p5, rel_widths = c(.5, 10))
+p5 <- plot_grid(p5, ggdraw(), rel_heights = c(10, .5), ncol = 1)
+
+
+# Add a lottle bit of space for label
+top_row <- plot_grid(pp + ylab("Subject") + xlab(""), p5, 
+                     rel_widths = c(1.2, 1), labels = "auto",
+                     label_fontfamily = "Helvetica", label_size = 10)
+```
+```{r functionsCP}
+```
+```{r CPresults, results="asis"}
+# Results of change-point analysis and models (real values)
+withinModels <- readRDS("../SM/data/cp/final_models_within.rds")
+betweenModels <- readRDS("../SM/data/cp/final_models_between.rds")
+
+effect_sizes <- append(withinModels, betweenModels) %>% 
+  map(summary) %>%
+  map("coefficients") %>%
+  map_dbl(2)
+
+# Change points (within and between)
+cpWithin <- readRDS("../SM/data/cp/cps_within_crewmembers.rds")
+cpBetween <- readRDS("../SM/data/cp/cps_between_crewmembers.rds")
+
+# Segments for diets
+rect <- data.frame(from = c(0, 250, 270),
+                     to = c(250, 270, 520)) %>%
+    mutate(diet = factor(c("FV", "SV", "TV"),
+                         levels = c("FV", "SV", "TV")))
+
+# Within-samples diversity
+tbi <- read.table("../SM/data/cp/beta_within.csv", sep = "\t", 
+                  header = T, check.names = F)
+# Between-samples diversity
+beta <- betaDiv(data.mod ~ subject_id + days, method = "t") %>%
+  filter(days_1 == days_2) %>%
+  group_by(days_1) %>%
+  filter(!duplicated(value))
+
+# Function built on top of "plotCPS" function in the script:
+# "/home/giovanni/Dropbox/mars500/dada2/SM/data/cp/changepoint_and_ga.R"
+plotFinal <- function(data, mapping, cps, diet.bar.h = 0.05, alpha = 1/3){
+  plotCPS(data, mapping, cps = cps, model = T, alpha = alpha) +
+    # adding diets
+    geom_rect(data = rect, inherit.aes = F,
+              aes(xmin = from, xmax = to, 
+                  ymin = -diet.bar.h, ymax = 0, 
+                  fill = diet), color = "black",
+              size = pt2ggSize(.5)) +
+    # adding segments for pre/post isolation
+    annotate(geom="segment", y = 0, yend = 0, x = 0, xend = 520,
+             linetype = 1, size = pt2ggSize(.5)) +
+    annotate(geom="segment", y = 0, yend = 0, x = 520, xend = 720,
+             linetype = 2, size = pt2ggSize(.5)) +
+    # Adjusting scale x and y
+    scale_y_continuous(expand = c(0,0), limits = c(-diet.bar.h, 1), 
+                       breaks = seq(0, 1, .5)) +
+    scale_x_continuous(expand = c(0,0), limits = c(0, 720)) +
+    # Fill scale
+    scale_fill_npg(name = "Diet") +
+    theme_publication(grid=F) +
+    # Adjusting graphical parameters
+    theme(panel.border = element_blank(),
+          axis.line = element_line(size = pt2ggSize(.5)),
+          plot.margin = unit(c(.5,.5, 1,.5), "lines"),
+          # legend.title = element_blank(),
+          legend.direction = "vertical",
+          legend.justification = c(0,1),
+          legend.position = c(0,.8)) +
+    xlab("Days") 
+}
+
+# Creating plot for within-samples
+b1 <- tbi %>%
+  mutate_at("subject_id", as.factor) %>%
+plotFinal(aes(x = two, y = tbi, color = subject_id, group = 1), 
+          cps = cpWithin, alpha = 1/2) +
+  ylab("Within-subject") +
+  scale_color_npg() +
+  coord_cartesian(clip = "off") +
+  guides(color = guide_legend(title = "Crewmember", keyheight = unit(.2, "lines"),
+                              override.aes = list(alpha = 1)))
+# Creating plot for between-samples (x scale is skewed by 14 to 
+# align the two plots)
+b2 <- plotFinal(beta, aes(x = days_1 + 14, y = value), cps = cpBetween) +
+  ylab("Between-subjects") + theme(legend.position = "none")
+legend <- get_legend(b1)
+
+# Constructing the bottom row plot
+bottom_row <- plot_grid(b1 + theme(legend.position = "none"), b2, legend, 
+                        ncol = 3, labels = letters[3:4], rel_widths = c(5,5,1),
+                        label_fontfamily = "Helvetica", label_size = 10)
+# Building figure 3
+figure.3 <- plot_grid(top_row, bottom_row, ncol = 1, rel_heights = c(1.5, 2))
+```
+
+```{r Table_2, results="asis"}
+# Making model table (need manual refinement)
+table.2 <- append(withinModels, betweenModels) %>%
+  set_names(c(rep("Within-subject", 3), "Between-subjects")) %>%
+  map(summary) %>%
+  map("coefficients") %>%
+  map_df(function(tab){
+    tab <- tab %>%
+      as.data.frame %>%
+      dplyr::rename(
+        "$b$" = "Estimate"
+        , "SE" = "Std. Error"
+        , "$df$" = "df"
+        , "$t$" = "t value"
+        , "$p$" = "Pr(>|t|)"
+      ) %>%
+      mutate(
+        Effect = papaja:::prettify_terms(rownames(.))
+      ) %>%
+      printnum(
+        digits =  c(5, 5, 2, 2, 4, 0)
+        , gt1 = c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE)
+        , zero = c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE)
+      ) %>%
+      select(`$b$`, `SE`, `$t$`, `$df$`, `$p$`)
+    tab[-1,]
+  })
+
+days <- c(0, cpWithin, 720)
+days <- cbind(days + 1, lead(days)) %>% 
+  na.omit() %>%
+  apply(1, paste0, collapse = " - ")
+table.2 <- add_column(table.2, Days = append(days, "1 - 720"), .after = 0) %>%
+  mutate(Days = paste0("    ", Days)) %>%
+  add_row(Days = "Within-subject", .after = 0) %>%
+  add_row(Days = "Between-subjects", .after = 4)
+
+rownames(table.2) <- NULL
+```
+
+```{r clustering}
+persAb <- readRDS("../SM/data/persistence_abundance.rds")
+cluster.counts <- table(as(tax_table(data), "matrix")[,"cluster"])
+r.squared <- summary(persAb$model)$r.squared
+
+persistence <- persAb$plot$data %>%
+  group_by(group) %>%
+  summarise(prevalence = min(prevalence)) %>%
+  pull(prevalence)
+```
+
+```{r getNetworks}
+# Define graphics param
+colors <- pal_npg()(10)[1:3] %>% 
+  set_names(c("Cluster 1", "Cluster 2", "Subject"))
+shapes <- c(Subject = 4, asv = 50)
+sizes <- c(Subject = 1, asv = .5)
+
+# Get taxa and subject data
+taxa <- as(tax_table(data), "matrix") %>%
+  as_tibble(rownames = "asv")
+subjects <- as(sample_data(data), "data.frame") %>%
+  as_tibble(rownames = "subject") %>%
+  mutate_at("subject_id", as.character)
+
+# Build vertex infos
+vertex <- subjects %>% group_by(subject_id) %>%
+  summarise(cluster = "Subject",
+            type = "Subject") %>%
+  dplyr::rename(vertex.names = "subject_id") %>%
+  bind_rows(taxa %>% select(asv, cluster) %>%
+              dplyr::rename(vertex.names = "asv") %>%
+              mutate(type = "asv")) %>%
+  mutate(size = sizes[type],
+         shapes = shapes[type],
+         color = colors[cluster])
+
+# Adjacency matrices for each time point
+adjacency <- as(otu_table(data), "matrix") %>%
+  sign() %>% as_tibble(rownames = "subject") %>%
+  left_join(subjects, by = "subject") %>%
+  split(.$days) %>%
+  map(function(m){
+    subj <- pull(m, subject_id)
+    adj <- select(m, starts_with("ASV_")) %>%
+      as.matrix()
+    rownames(adj) <- subj
+    adj
+  })
+
+
+# Building networks
+networks <- adjacency %>%
+  map(network, bipartite = T, directed = F) %>%
+  map(set.network.attribute, 'vertex.pid', 'vertex.names')
+
+net.file <- "./data/net.dyn.rds"
+if(!file.exists(net.file)){
+  # Build dymanic network
+  net.dyn <- networkDynamic(network.list=networks,
+                            vertex.pid="vertex.names")
+  
+  # testing if default.dist=5 can be acceptable
+  if(F){
+    msmAt1 <- network.extract(net.dyn, at=1)
+    plot(msmAt1, coord=network.layout.animate.kamadakawai(msmAt1, default.dist=5), 
+         arrow = F, edge.col = "darkgray", edge.lwd = .2, vertex.lwd = .2)
+  }
+  
+  # camputing layout for animations
+  compute.animation(net.dyn, animation.mode='kamadakawai', default.dist=5)
+  saveRDS(net.dyn, net.file)
+}else{
+  net.dyn <- readRDS(net.file)
+}
+```
+
+```{r renderVideo}
+# Reordering vertex data frame (just in case)
+vertex <- vertex %>%
+  arrange(match(vertex.names, net.dyn %v% "vertex.names"))
+
+net.dyn %v% "vertex.col" <- vertex$color
+net.dyn %v% "vertex.cex" <- vertex$size
+net.dyn %v% "vertex.sides" <- vertex$shapes
+
+# If the video file is present do not
+# render it again.
+# To force rendering of the video
+# delete the file "./data/netwrok_movie.mp4"
+# or set render.video to TRUE
+video.file <- "./data/netwrok_movie.mp4"
+render.video <- F
+if(!file.exists(video.file) | render.video){
+  saveVideo({
+    render.animation(net.dyn,
+                     displaylabels=FALSE,
+                     vertex.sides = "vertex.sides",
+                     vertex.rot = 0,
+                     vertex.cex = "vertex.cex", 
+                     arrow = F, 
+                     vertex.col = "vertex.col", 
+                     edge.col = "darkgray",
+                     edge.lwd = .2, vertex.lwd = .2,
+                     render.par=list(tween.frames = 50))},
+    video.name = video.file,
+    ani.width = 1280, ani.height = 1280, nmax = 100,
+    interval = 25, ani.res = 600)
+}
+```
+
+```{r edgesCount}
+# Get subject ids and days
+samples <- unique(as.character(subjects$subject_id))
+days <- unique(subjects$days + 1)
+
+# Get the count of formed and destroied edges for each subject
+edgeCount <- lapply(seq_along(adjacency)[-1], function(i){
+  x <- adjacency[[i]]
+  y <- adjacency[[(i-1)]]
+  
+  # match subject id
+  x <- x[match(samples, rownames(x)),]
+  y <- y[match(samples, rownames(y)),]
+  
+  # FORMED: edges_tn - edges_t[n-1]
+  # DESTROIED: edges_t[n-1] - edges_tn
+  # Negative number are set to 0 before summing
+  formed <- x - y
+  destroyed <- y - x
+  
+  formed[formed < 0] <- 0
+  destroyed[destroyed < 0] <- 0
+  
+  formed <- rowSums(formed)
+  destroyed <- rowSums(destroyed)
+  
+  # Building final data set
+  data.frame(samples, formed, destroyed, 
+             from = days[i-1], to = days[i], 
+             row.names = NULL)
+}) %>% bind_rows() 
+
+# Correlation between formed and destroyed
+cor.between <- cor.test(edgeCount$formed, 
+                        edgeCount$destroyed,
+                        method = "spearman")
+r <- round(cor.between$estimate, 2)
+p <- round(cor.between$p.value, 2)
+
+# Mixed effect models for formed
+# and destroyed edges
+experiment <- subjects %>%
+  group_by(days) %>%
+  summarise(experiment = unique(experiment)) %>%
+  mutate(days = days + 1)
+model.data <- edgeCount %>% 
+  left_join(experiment, by = c("from" = "days")) %>%
+  dplyr::rename(days = "from")
+
+# fitting two models using days and experiment
+# as covariates and subjects as random intercept
+#   1: formed
+#   2: destroyed
+models <- c("formed", "destroyed") %>%
+  set_names() %>%
+  map(paste, "~ days + experiment + (1|samples)") %>%
+  map(as.formula) %>%
+  map(lmer, data = model.data, REML = F)
+
+
+# Result table
+table.s9 <- models %>%
+  map(summary) %>%
+  map(coef) %>%
+  map(as.data.frame) %>%
+  map_df(function(tab){
+    tab %>% 
+      mutate(Effect = papaja:::prettify_terms(rownames(.))) %>%
+      filter(Effect != "Intercept") %>%
+      select(Effect, everything()) %>%
+      dplyr::rename(
+        "$b$" = "Estimate"
+        , "SE" = "Std. Error"
+        , "$df$" = "df"
+        , "$t$" = "t value"
+        , "$p$" = "Pr(>|t|)"
+      ) %>%
+      mutate_at("Effect", str_replace, "Experimentpost-Mars500", "Post-isolation") %>%
+      mutate(Effect = str_c("    ", Effect)) %>%
+      printnum(digits =  c(0, 2, 2, 2, 2, 3))
+  }) %>%
+  add_row(Effect = "Formed", .before = 1) %>%
+  add_row(Effect = "Destroyed", .after = 3)
+saveRDS(table.s9, "../SM/tab/Table_S9.rds")
+
+# Slope and intercept for
+# population level predictions
+# Since the effect of isolation 
+# for destroyed edges was not
+# significant only one line will be reported
+ab_lines <- models %>%
+  map(summary) %>%
+  map(coef) %>%
+  map_df(function(x) {
+    slope <- x[2,1]
+    x[3,1] <- x[1,1] + x[3,1]
+    intercept <- c(x[1,1], x[3,1])
+    res <- data.frame(slope = slope, intercept = intercept,
+                      experiment = unique(model.data$experiment))
+  }, .id = "edge_type")
+ab_lines <- ab_lines[1:(nrow(ab_lines) - 1),]
+
+# Number of formed/destroyed edges in time
+col <- pal_npg()(10)[c(3,8)]
+edgePlot <- model.data %>%
+  gather("edge_type", "count", formed, destroyed) %>%
+  mutate(edge_type = fct_relevel(edge_type, "formed")) %>%
+ggplot(aes(x = days, y = count, 
+           color = edge_type, fill = edge_type)) +
+   geom_vline(xintercept = 520, linetype = 3,
+             size = .6, color = "black") +
+  geom_point(alpha = 1/3, size = 2) +
+  geom_abline(data = ab_lines, 
+              aes(slope = slope, intercept = intercept,
+                  color = edge_type, linetype = experiment),
+              size = .75) +
+  theme_classic(base_size = 8, base_family = "Helvetica", 
+                base_line_size = .25) +
+  theme_publication(grid = F, legend.direction = "vertical") +
+  scale_color_manual(values = col) +
+  scale_fill_manual(values = col) +
+  xlab("Days") +
+  ylab("Edge number") +
+  theme(legend.title = element_blank(),
+        legend.position = c(.3, 1),
+        legend.box = "horizontal",
+        legend.justification = c(0,1),
+        # legend.background = element_blank(),
+        legend.box.margin = margin(0,.5,.5,.5, "lines")) +
+  guides(color = guide_legend(override.aes = list(linetype = 0, 
+                                                  alpha = 1)))
+
+conf <- models %>% map(confint) %>% 
+  map(function(x) x["days",])
+```
+
+```{r allNetworks}
+# Make multiple wilcox tests for each time point
+makeWilcox <- function(formula, data, by = "day"){
+  sp <- get(by, pos = data)
+  vars <- all.vars(formula)
+  
+  pvalues <- split(data, sp) %>%
+    # wilcoxon test model
+    map(~wilcox.test(formula = formula, data = .)) %>%
+    # Tabling p-values
+    map_dbl("p.value") %>%
+    enframe(name = "day", value = "p.val") %>%
+    mutate(label = case_when(
+      p.val < 0.01 ~ "**",
+      p.val < 0.05 ~ "*",
+      T ~ ""
+    ),
+    !!by := as.numeric(.data[[by]]))
+  
+  # Coords for asterisks (significant contrasts)
+  labels <- data %>%
+    group_by(.data[[by]], .data[[vars[2]]]) %>%
+    summarise(y = mean(.data[[vars[1]]])) %>%
+    left_join(pvalues)
+  
+  return(list(pvalues = pvalues,
+         labels = labels))
+}
+
+# Get average y values at selected time points
+getSelectedTimePoints <- function(data, formula, by = "day", 
+                                  time.points){
+  vars <- all.vars(formula)
+  
+  data %>%
+    group_by(.data[[vars[2]]], .data[[by]]) %>%
+    summarise(y = mean(.data[[vars[1]]])) %>%
+    ungroup() %>%
+    filter(.data[[by]] %in% time.points)
+}
+
+# Selected time points based on the duration
+# of the mission
+time.points <- c("0", "301", "715")
+
+# Centrality calculation
+centralities <- adjacency %>%
+  map(igraph::graph.incidence) %>%
+  map(function(x){
+    centr <- igraph::centr_degree(x)$res
+    names(centr) <-  igraph::vertex_attr(x, "name")
+    centr
+  }) %>%
+  map_df(enframe, name = "vertex.names", 
+         value = "centrality", .id = "day") %>%
+  filter(grepl("ASV_", vertex.names)) %>%
+  mutate(day = as.numeric(day) + 1) %>%
+  left_join(vertex)
+
+
+contrasts <- makeWilcox(centrality ~ cluster, centralities)
+# All contrasts have a p-vlaue < 0.01
+if(!all(contrasts$pvalues$p.val < 0.01)){
+  message("Not all contrasts have a significant p-value in figure 4d")
+}
+
+
+# Get selected time points
+tp.selected <- getSelectedTimePoints(centralities, centrality ~ cluster, 
+                                     time.points = as.numeric(time.points) + 1)
+
+# All contrasts are significant.
+# Significant is not reported
+centr.plot <- ggplot(centralities, aes(x = day, y = centrality,
+                                       color = cluster, group = cluster)) +
+  stat_summary(geom = "ribbon", fun.data = mean_se, fill = "transparent",
+               size = 0.25, linetype = 2, show.legend = F) +
+  stat_summary(geom = "line", fun = "mean") +
+  stat_summary(geom = "point", fun = "mean") +
+  geom_point(data = tp.selected, aes(x = day, y = y),
+             inherit.aes = F, shape = 21, fill = NA,
+             size = 3) +
+  # Uncomment this line if you want to report significant contrasts
+  # geom_text(data = contrasts$labels, aes(x = day, y = y, label = label),
+  #            inherit.aes = F, vjust = -.5) +
+  theme_classic(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 6)) +
+  theme(legend.position = c(0, 1.1),
+        legend.justification = c(0,1),
+        legend.background = element_blank(),
+        legend.direction = "vertical",
+        legend.box.margin = margin(0,.5,.5,.5, "lines"),
+        legend.title = element_blank()) +
+  ylab("Node-level\ncentrality score") +
+  xlab("Days") +
+  scale_color_npg() +
+  guides(shape = F, size = F)
+
+# Normalized abundace in time
+dds <- suppressMessages(
+  phyloseq_to_deseq2(data, ~ days + food + subject_id)
+)
+dds <- estimateSizeFactors(dds, "poscounts")
+x <- counts(dds, norm = T) %>%
+  data.frame(check.names = F) %>%
+  t()
+
+meta.mod <- sample_data(data) %>%
+  as("data.frame")
+
+abundances <- cbind(x, meta.mod[rownames(x),]) %>%
+  gather("vertex.names", "abundance", starts_with("ASV_")) %>%
+  mutate(day = days + 1) %>%
+  left_join(vertex) %>%
+  filter(abundance > 0)
+
+contrasts <- makeWilcox(abundance ~ cluster, abundances, by = "day")
+# All contrasts have a p-vlaue < 0.01
+if(!all(contrasts$pvalues$p.val < 0.01)){
+  message("Not all contrasts have a significant p-value in figure 4e")
+}
+
+# Get selected time points
+tp.selected <- getSelectedTimePoints(abundances, abundance ~ cluster, 
+                                     time.points = as.numeric(time.points) + 1)
+
+
+# Abundance of the two clusters during
+# the whole mission. Significance is not reported
+# as all contrasts were significant with a p-value < 0.01
+abundance.plot <- abundances %>%
+ggplot(aes(x = day, y = abundance, color = cluster)) +
+  stat_summary(geom = "line", fun = "mean") +
+  stat_summary(geom = "ribbon", fun.data = mean_se, fill = "transparent",
+               size = 0.25, linetype = 2, show.legend = F) +
+  stat_summary(geom = "point", fun = "mean") +
+  geom_point(data = tp.selected, aes(x = day, y = y),
+             inherit.aes = F, shape = 21, fill = NA,
+             size = 3) +
+  # Uncomment this line if you want to report significant contrasts
+  # geom_text(data = contrasts$labels, aes(x = day, y = y, label = label),
+  #            inherit.aes = F, vjust = -.5) +
+  scale_y_continuous(expand = c(0,0)) +
+  coord_cartesian(ylim = c(0, 800)) +
+  theme_classic(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_color_npg() +
+  theme(legend.position = c(0, 1.1),
+        legend.justification = c(0,1),
+        legend.background = element_blank(),
+        legend.direction = "vertical",
+        legend.box.margin = margin(0,.5,.5,.5, "lines"),
+        legend.title = element_blank()) +
+  xlab("Days") +
+  ylab("Abundance")
+  
+
+# Get coordinates of all graphs
+# (only vertexes with at least one edge)
+net.data <- adjacency[time.points] %>%
+  map(function(m) m[,colSums(m) > 0]) %>%
+  map(network, bipartite = T, directed = F) %>%
+  map_df(ggnetwork, layout = "fruchtermanreingold",
+         cell.jitter = 0.75, .id = "day") %>%
+  mutate(day = as.numeric(day) + 1)
+
+# Plotting graphs
+graphs <- net.data %>%
+  left_join(vertex) %>%
+  mutate(day = paste("Day: ", day),
+         day = fct_inorder(day)) %>%
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_edges(color = "gray20", size = .05) +
+  geom_nodes(aes(fill = cluster, shape = type, size = type),
+             stroke = .05, color = "gray20") +
+  scale_shape_manual(values = c(Subject = 22, asv = 21)) +
+  scale_size_manual(values = c(Subject = 5, asv = 3)) +
+  scale_fill_npg() +
+  theme_blank(base_size = 8, base_family = "Helvetica") +
+  guides(fill = guide_legend(override.aes = list(size = 3, shape = c(21, 21, 22))),
+         size = F, shape = F) +
+  theme(legend.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(face = 'plain', size = 6),
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom") +
+  facet_wrap(~day, ncol = 5)
+
+
+# Persistence Vs abundance plot and fine tuning
+a <- persAb$plot +
+  theme(legend.position = c(0, 1.1),
+        legend.justification = c(0,1),
+        legend.background = element_blank(),
+        legend.direction = "vertical",
+        legend.box.margin = margin(0,.5,.5,.5, "lines")) +
+  coord_cartesian(clip = "off")
+
+edgePlot <- edgePlot +
+  theme(plot.background = element_rect(fill = "transparent"))
+
+# Building final plot
+first.row <- plot_grid(a, edgePlot, labels = letters[1:2],
+                       label_size = 12, label_fontfamily = "Helvetica",
+                       label_fontface = "bold")
+last.row <- plot_grid(centr.plot, abundance.plot, labels = letters[4:5],
+                      label_size = 12, label_fontfamily = "Helvetica",
+                      label_fontface = "bold")
+figure.4 <- plot_grid(first.row, graphs, last.row, ncol = 1, 
+                      labels = c("", "c", ""),
+                      label_size = 12, label_fontfamily = "Helvetica",
+                      label_fontface = "bold",
+                      rel_heights = c(1, 1.5, 1))
+```
+
+```{r prepareData}
+# change points (defined above)
+cps <- data.frame(from=c(0, cpWithin), 
+                  cp = c("first", "second", "third"))
+
+# Order phyloseq object based on days
+# (just to be sure)
+ord <- sample_data(data.mod) %>%
+  as("data.frame") %>%
+  mutate(id = rownames(.)) %>%
+  arrange(subject_id, days) %>%
+  pull(id)
+
+# Scaling counts and transforming into relative abundances
+X <- t(counts(dds, norm = T))
+otu_table(data.mod) <- otu_table(X, taxa_are_rows = F)[ord,]
+data.mod <- transform_sample_counts(data.mod, function(x) (x/sum(x)))
+
+# Util function to split a phyloseq object based on a
+# categorical variable contained in the sample_data
+# slot.
+splitPhyloseq <- function(phylo, by, keep.zeroes = F){
+  # Getting the variable to split by
+  by <- get(by, sample_data(phylo))
+  
+  # Splitting
+  res <- lapply(unique(by), function(b){
+    extr <- by == b
+    prune_samples(extr, phylo)
+  })
+  
+  # If keep.zeroes == F removing
+  # taxa which sum to 0 (not present in the subset)
+  if(!keep.zeroes){
+    res <- lapply(res, filter_taxa, 
+                  flist = function(x) sum(x) > 0, 
+                  prune = T)
+  }
+  
+  # Return a list of phyloseq objects
+  setNames(res, unique(by))
+}
+
+# Util funciton to perform differences 
+# between consecutive values of a 
+# variable contained in the sample_data slot
+getDelta <- function(phylo, over = "days", gather = F, 
+                     fun = function(a, b) abs(a - b)){
+  # get variable
+  over <- get(over, sample_data(phylo))
+  
+  # Sort and get unique values
+  o <- sort(unique(over))
+  
+  # cbind consecutive values
+  from <- o[-length(o)]
+  to <- o[-1]
+  o <- cbind(from, to)
+  
+  # Compute differences between consecutive
+  # observations using the fun argument
+  res <- apply(o, 1, function(d){
+    extr <- over %in% d
+    x <- phylo %>%
+      prune_samples(extr, .) %>%
+      otu_table() %>%
+      as("matrix")
+    
+    # If more than two samples stop
+    if(nrow(x) != 2){
+      stop("Trying to compare more than two samples")
+    }
+    
+    # Compute differences
+    fun(x[1,], x[2,])
+  })
+  
+  # If gather is true, data is gathered
+  if(gather){
+    res <- lapply(1:nrow(res), function(i){
+      data.frame(o, variable = rownames(res)[i], 
+                 value = res[i,], stringsAsFactors = F)
+    })
+    return(do.call(rbind, res))
+  }
+  
+  # Otherwise a normal data frame is returned
+  data.frame(o, t(res), stringsAsFactors = F)
+}
+```
+
+```{r asvBeta}
+# Splitting data and calculating delta for each
+# subject, ASV and time points
+delta <- splitPhyloseq(data.mod, "subject_id", F) %>%
+  map_df(getDelta, over = "days", gather = T,
+         fun = function(a, b) abs(a - b),
+         .id = "subject") 
+
+# Joining CPS
+delta <- left_join(delta, cps) %>%
+  fill(cp, .direction = "down")
+
+# Modelling time and CPs
+models <- delta %>% split(.$subject) %>%
+  map(function(d){
+    d %>% split(.$variable) %>%
+      map(~lm(value ~ from*cp, data = .))
+  })
+
+# Building ANOVA table
+effect <- models %>% 
+  map_df(function(m){
+    m %>% map(anova) %>%
+      map_df(as_tibble, rownames = "Effect", 
+             .id = "ASV")
+  }, .id = "Subject") 
+  
+
+effect <- effect %>% 
+  dplyr::rename(df1 = "Df",
+                `F` = `F value`,
+                p = `Pr(>F)`,
+                MSE = `Mean Sq`) %>%
+  group_by(Subject, ASV) %>%
+  mutate(df2 = df1[Effect == "Residuals"]) %>%
+  filter(Effect != "Residuals") %>%
+  mutate(p.adj = p.adjust(p, "BH"),
+         Effect = str_replace(Effect, "from", "days")) %>%
+  select(Subject, ASV, Effect, `F`, df1, df2, p, p.adj)
+
+# Building ANOVA table
+groups <- models %>% 
+  map_df(function(m){
+    m %>% map(coef) %>%
+      map_df(as.tibble, rownames = "effect", .id = "ASV") %>%
+    spread(effect, value) %>%
+    select(ASV, from, `from:cpsecond`, `from:cpthird`) %>%
+    mutate(`from:cpsecond` = from + `from:cpsecond`,
+           `from:cpthird` = from + `from:cpthird`) %>%
+    mutate_if(is.numeric, sign) %>%
+    unite("group", from, `from:cpsecond`, 
+          `from:cpthird`, sep = "/")
+  }, .id = "Subject") 
+
+# Selecting only significant ASV
+clust <- tax_table(data.mod) %>% 
+  as("matrix") %>%
+  as_tibble(rownames = "ASV")
+
+sign.asv <- effect %>% 
+  filter(p.adj < 0.05, Effect == "days:cp") %>%
+  left_join(groups, by =c("ASV", "Subject")) %>%
+  left_join(clust, by = "ASV")
+
+sign.asv %>% 
+  filter(group == "1/-1/1") %>%
+  mutate(ord = as.numeric(str_extract(ASV, "[0-9]+"))) %>%
+  arrange(Subject, ord) %>%
+  select(-ord, -Effect, -group, -species) %>%
+write.table("../SM/tab/Table_S10.csv", sep = ";",
+            col.names = T, quote = F, row.names = F)
+
+per.subj.asv <- sign.asv %>% 
+  filter(group == "1/-1/1") %>%
+  group_by(Subject) %>%
+  dplyr::count()
+per.subj.asv <- per.subj.asv %>% pull(n) %>%
+  setNames(per.subj.asv$Subject)
+
+
+all <- clust %>% dplyr::count(cluster)
+
+counts <- sign.asv %>% filter(group == "1/-1/1") %>%
+  split(.$Subject) %>%
+  map_df(function(sub){
+    counts <- sub %>% group_by(ASV) %>%
+      summarise_at("cluster", unique) %>%
+      dplyr::count(cluster)
+    
+    q <- counts %>% filter(cluster == "Cluster 2") %>%
+      pull(n)
+    
+    if(length(q) == 0)
+      q <- 0
+    
+    m <- all %>% filter(cluster == "Cluster 2") %>%
+      pull(n)
+    
+    n <- all %>% filter(cluster == "Cluster 1") %>%
+      pull(n)
+    
+    k <- nrow(sub)
+    
+    pop.f <- m / (m + n)
+    obs.f <- q / k
+    
+    # Hypergeometric test
+    p.val <- phyper(q = q - 1, m = m, n = n, k = k, lower.tail = F)
+    data.frame(q = q, m = m, n = n, k = k, pop.f = pop.f, obs.f = obs.f, 
+               log2PopObs = log2(obs.f/pop.f), p = p.val)
+  }, .id = "Subject")
+
+figure.5b <- counts %>% 
+  add_row(Subject = "Overall", obs.f = unique(counts$pop.f),
+          .before = 1) %>%
+  mutate(Subject = fct_inorder(Subject)) %>%
+  mutate(sign = ifelse(p < 0.01, "**", 
+                       ifelse(p < 0.05, "*", ""))) %>%
+ggplot(aes(x = Subject, y = obs.f)) +
+  geom_col(fill = "gray40", color = "black", width = .8, size=0.02) +
+  geom_text(aes(label = sign), vjust = -.1) +
+  theme_classic(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_y_continuous(expand = c(0,0), limits = c(0, .8), 
+                     breaks = seq(0, .8, .2)) +
+  xlab("Subjects") +
+  ylab("Observed fraction of stable ASVs") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+all.models <- models %>%
+  map_df(function(s){
+    s %>% map_df(function(a){
+      d <- a$model
+      data.frame(d, pred = predict(a))
+    }, .id = "ASV")
+  }, .id = "Subject")
+
+# Adding one to include only days reported
+labs <- c(min(meta$days), cpWithin, max(meta$days) + 1)
+labs <- cbind(labs + 1, lead(labs)) %>%
+  na.omit() %>%
+  apply(1, paste, collapse = " - ")
+
+figure.5a <- all.models %>%
+  left_join(sign.asv %>% filter(group == "1/-1/1"),
+            by = c("Subject", "ASV")) %>%
+  filter(!is.na(Effect)) %>%
+  group_by(Subject, ASV) %>%
+  mutate(value = scale(value),
+         pred = scale(pred),
+         grp = paste(ASV, cp)) %>%
+ggplot(aes(x = from, y = value, color = cp)) +
+  geom_line(aes(group = grp, y = pred), show.legend = F) +
+  geom_point(shape = 21, aes(fill = cp), color = "black") +
+  facet_grid(Subject~.) +
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_color_npg() +
+  scale_fill_npg(labels = function(x){
+    case_when(
+      x == "first" ~ labs[1],
+      x == "second" ~ labs[2],
+      x == "third" ~ labs[3]
+    )
+  }) +
+  ylab(expression("Absolute standardized differences ("*T[n]~-~T[n+1]*")")) +
+  xlab("Days") +
+  theme(legend.position = "bottom") +
+  labs(fill = "Days")
+
+figure.5 <- figure.5a + figure.5b +
+  plot_annotation(tag_levels = "a") +
+  plot_layout(widths = c(2/3, 1/3)) &
+  theme(plot.tag = element_text(family = "Helvetica", face = "bold", size = 12))
+
+figure.5 <- plot_grid(figure.5a, figure.5b, ncol = 2, rel_widths = c(2/3, 1/3),
+          label_size = 12, label_fontfamily = "Helvetica", label_fontface = "bold",
+          labels = letters[1:2])
+```
+
+# Declarations
+
+## Ethics approval and consent to participate
+
+Data collected in this work are part of a larger initiative headed by Russia’s Institute of Biomedical Problems (IBMP) with the participation of the European Space Agency (ESA) as part of the European Programme for Life and Physical Sciences (ELIPS). Please refer to MARS500 mission for ethic approval: https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Mars500/Mars500_study_overview
+
+## Availability of data and materials
+
+All data generated or analysed during this study are included in this published article and its supplementary information files. Sequences are deposited at ENA database under the accession ERP119217.
+
+## Funding
+
+The MARS500 Programme was financed by the European Programme for Life and Physical Sciences in Space (ELIPS). The financial support of the Italian Space Agency (contract I/011/11/0) is highly remarked and acknowledged. This work was partially supported by BMR Genomics for sequencing of salivary microbiota.
+
+## Authors' contributions
+
+F.C., R.F., and G.B. conceived and designed the experiments. G.B., C.C., and E.G.C. acquired and analyzed the data. G.B. and A.M. interpreted the data. G.B., R.F., and A.M. wrote the manuscript.
+
+# Figures
+
+```{r, figure.1, fig.width=5, fig.height=8, fig.cap="__Figure 1: Salivary microbiota diversity along Mars500 mission and follow-up.__ a) Timeline of Mars500 mission. Phases were reported in the top part of the panel together with their length in days. The second phase included the landing simulation (20 days) as well as the trip back to Earth (250 days). Diets supplied to crewmembers were reported using different colors, violet for the first food variant, cyan for the second food variant, and yellow for the third food variant. Samples were reported using one point for each crewmember (subject 5001 red, 5002 pale blue, 5003 green, 5004 dark blue, 5005 ochre, and 5006 gray). The days of isolation were reported in the bottom part of the panel. b) Distribution of the main bacterial classes. Panels were divided according to crewmembers (vertically) and diets (horizontally). ASVs with a relative cumulative frequency lower than 5% in all samples were collapsed into a single group called \"Other\". c) Differences in alpha diversity---reported using the inverse Simpson index just like panels d, e, and f---between samples collected during and after the isolation period. d) Differences across diets (FV, first variant; TV, third variant; NR, normal diet). e) Differences among subjects. f) Differences along the whole mission and during the follow-up. Points are the average diversity values among subjects whereas errorbars represent the 95% confidence interval around the mean. The red line represents the population effect of the linear mixed model whose coefficients are reported in Table S8."}
+figure.1
+```
+
+```{r, figure.2, fig.width=6, fig.height=5, fig.cap="Figure 2: Microbial assemblage variation according to diet, crewmembers, and time.__ a) Non-metric multidimensional scaling based on different beta-diversity indexes (reported on the top of each panel). Samples were colored according to crewmembers whereas the point shape represents the type of diet (FV, first variant; TV, third variant; NR, normal diet). The dispersion of groups was tested for homogeneity and results were reported on the top of each oridnation (a p-value higher than 0.05 means that dispersions are homogeneous). b) Permutational multivariate analysis of variance using distance matrices based on the same indexes reported in panel a. The R^2^ values associated with each factor used in the analysis is reported in the horizontal axis whereas asterisks report the significance level of each factor (*, p-value < 0.05; **, p-value < 0.01). Colors represent the different factors modeled in the analysis. For additional information about diets, sampling point and crewmembers see Supplementary information and Supplementary Figure S1."}
+figure.2
+```
+
+```{r, figure.3, fig.width=6.5, fig.height=4, fig.cap="Figure 3: Crewmembers' salivary microbiota composition in time.__ a) Bray-Curtis (also known as quantitative Sorensen) index has been used to inspect distances between and within-subject during isolation and follow-up. Between-subjects diversity was computed by comparing the salivary microbiota of each subjects at each timepoint  (gray arrows); within-subject diversity was computed by comparing the salivary microbiota of the same subject over time (black arrows). b) Change-point analysis revealed changes in salivary microbiota composition of each subject (CP detection). Genetic algorithm and linear modelling detected increasing/decreasing patterns along time (GA optimization). Finally, we fit a linear mixed-model for each segment detected using crewmembers as random intercept (Modelling). c and d) Results obtained following the pipeline reported in \"b\" for within- and between-samples differences. Diets were reported in the bottom part of the plots using different colors (FV, fist food variant; SV, second food variant; TV, third food variant). Since crewmemebrs ate freely during the follow-up no diet was reported in the plot."}
+figure.3
+```
+
+```{r, figure.4, fig.width=6, fig.height=6, fig.cap="__Figure 4: Bacterial community structure in time.__ a) Persistence and abundance of ASVs detected. Persistence was expressed as the number of subjects in which an ASV was detected whereas abundance was expressed as log-normalized number of reads assigned to that ASV (the black line represent results of the linear fitting: 95% CI [9.81, 10.38], t(1926) = 70.27, p < 0.001). Cluster 1 (reported in red) was composed of ASVs with a lower persistence and abundance than Cluster 2 (reported in blue). b) Number of edges formed (green) and destroyed (red) at each time point. Lines represent the result of two linear mixed models with subject as random intercept (Table S9). The dashed line represents the effect at the end of the isolation---it was reported only for formed edges since the number of destroyed edges was not significantly impacted by the isolation. c) Community networks at the biginning of the mission (day 1), during the simulated trip to Earth (day 302), and at the end of the mission (day 716). Selected time points were highlighted in panels d and e using a black circle. Days are reported at the top of each network whereas nodes with no edges (namely ASVs not detected at a given time point) were not reported to save space for graphical representation. d) Node-level centrality score during the mission and the follow-up. Each point represents the mean centrality score at a given sampling time whereas the two dotted lines represent the standard error on the mean. Amplicon sequence variants of cluster 1 reported a lower level of centrality in respect with those of cluster 2 at all time points (Wilcoxon rank sum test: all p-values < 0.01). e) Average abundance of ASVs assigned to cluster 1 and 2. Points and dotted lines report the mean and its error as described in panel d. At each time point ASVs of cluster 2 showed an higher abundance than those in cluster 1 (Wilcoxon rank sum test: all p-values < 0.01)."}
+figure.4
+```
+
+```{r, figure.5, fig.width=6, fig.height=4, fig.cap="Figure 5: Drivers of diversity for each crewmember.__ a) Single ASVs showing a trend of diversity along time similar to the whole within-subject diversity were reported. Points represent absolute differences between two consecutive time points whereas colors reflect the segmentation detected through the change-point analysis reported in Figure 3c. Lines show the predicted differences using linear modelling. We standardize differences to represent ASVs with different ranges of values in the same panel. b) Enrichment analysis of members of Cluster 2 in respect with the population. The firs bar on the left represents the overall fraction of AVSs assigned to Cluster 2 whereas the other bars report the fraction of ASVs assigned to the same cluster for each subject. Adjusted p-values were reported using a single asterisk (p < 0.05) or two (p < 0.01)."}
+figure.5
+```
+
+# Tables
+
+```{r table.1, result="asis"}
+pander::pander(table.1, keep.line.breaks = TRUE, caption = "__Table 1: Number of salivary samples collected during the study.__ The number of samples collected during each step of the study was reported for each crewmember. Marginal totals were added for subjects and simulated journeys together with the grand total that was reported in the bottom right corner of the table.")
+```
+
+```{r table.2, result="asis"}
+pander::pander(table.2, missing = "", caption = "__Table 2: Temporal changes of salivary microbiota.__ Within-sample diversity was divided into three segments following change-point analysis whereas between-samples diversity was modeled on the full time period since no change-points were detected. Results of mixed effect models fitted for each segment were reported in the table. $b$, regression parameter (slope of the model); SE, standard error; $t$, t-value (also known as \"standardized\" regression parameter); $df$, degrees of freedom; $p$, p-value.")
+```

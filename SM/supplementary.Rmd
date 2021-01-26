@@ -1,0 +1,1070 @@
+---
+title: "__Supplementary materials__<br>Defining the resilience of the human salivary microbiota by a 520 days longitudinal study in confined environment: the Mars500 mission"
+author: 
+  - Giovanni Bacci^1^
+  - Alessio Mengoni^1^
+  - Giovanni Emiliani^2^
+  - Carolina Chiellini^3^
+  - Edoardo Giovanni Cipriani^1^
+  - Giovanna Bianconi^4^
+  - Francesco Canganella^4,5^
+  - Renato Fani^1^
+output: 
+ html_document
+pandoc_args: ["--smart"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(dev = 'png')
+knitr::opts_chunk$set(dpi = 600)
+knitr::opts_chunk$set(fig.path='img/')
+
+pander::panderOptions('digits', 2)
+pander::panderOptions('round', 2)
+pander::panderOptions('keep.trailing.zeros', TRUE)
+pander::panderOptions("table.alignment.default", "left")
+
+source("./data/enrichment.R")
+source("utils.R")
+```
+
+```{r loadLibraries, include=FALSE}
+suppressPackageStartupMessages({
+  library(papaja)
+  library(tidyverse)
+  library(data.table)
+  library(phyloseq)
+  library(ggsci)
+  library(foreach)
+  library(vegan)
+  library(cowplot)
+  library(reshape2)
+  library(scales)
+  library(Biostrings)
+  library(grid)
+  library(wesanderson)
+  library(xlsx)
+  library(lmerTest)
+  library(ggbeeswarm)
+  library(tidytree)
+  library(ggtree)
+  library(ggnetwork)
+  library(network)
+  library(patchwork)
+  library(lmerTest)
+  
+  library(dtwclust)
+  library(clusterCrit)
+  library(cluster)
+})
+```
+
+^1^Department of Biology, University of Florence, Via Madonna del Piano 6, I-50019 Sesto Fiorentino, Italy  
+^2^Istituto per la Protezione Sostenibile delle Piante, Consiglio Nazionale delle Ricerche, via Madonna del Piano 10, I-50019 Sesto Fiorentino, Italy  
+^3^Department of Agriculture, Food and Environment, University of Pisa, Via del Borghetto 80, I-56124 Pisa, Italy  
+^4^Department of Biological, Agricultural and Forestry Sciences, Università della Tuscia, Via San Camillo de Lellis snc, I-01100 Viterbo, Italy  
+^5^Embassy of Italy, 98 Hannam-daero, Hannam-dong, Yongsan-gu, Seoul, South Korea
+\newpage
+
+```{r, compareDB}
+figure.s1 <- readRDS("data/taxa/database_comparison.rds")
+```
+
+
+```{r}
+# Reading counts and taxonomies
+tab <- readRDS("./data/all_seqtab_nochim.rds")
+tax <- readRDS("./data/tax_assignments.rds")
+
+# Reading track back table
+track <- read.table("./data/track_back.tsv", 
+                    header = T,
+                    row.names = 1,
+                    sep = "\t")
+
+# Removing unknown taxa
+unknown <- is.na(tax[,1])
+track$known <- rowSums(tab[, !unknown])
+
+# Removing Eukaria and Archaea
+bacteria <- tax[,1] == "Bacteria" & !unknown
+rm(unknown)
+
+# Count Bacteria for each sample
+track$bacteria <- rowSums(tab[,bacteria])
+
+# Count chloroplast reads
+chloroplast <- tax[,"order"] == "Chloroplast" & !is.na(tax[,"order"])
+track$no_chloroplast <- rowSums(tab[,!chloroplast])
+
+# Count mitochondria
+mitochondria <- tax[,"family"] == "Mitochondria" & !is.na(tax[,"family"])
+track$no_mitochondria <- rowSums(tab[,!mitochondria & !chloroplast])
+
+track <- track %>% select(-derepF, -derepR, -denoisedF, -denoisedR)
+rownames(track) <- sapply(strsplit(rownames(track), "F"), "[[", 2)
+track <- track %>% rownames_to_column(var = "sample_id")
+rownames(track) <- NULL
+
+# Tracking back percentages
+no_adapt <- mean((track$no.adapt / track$raw) * 100)
+filt <- mean((track$filtered / track$no.adapt) * 100)
+merged_deno <- mean((track$merged / track$filtered) * 100)
+no_chim <- mean((track$no.chim / track$merged) * 100)
+
+# Selecting ASVs to keep
+toKeep <- bacteria & !chloroplast & !mitochondria
+
+# Percentage estimation and extraction
+retained_asv <- (sum(toKeep) / ncol(tab)) * 100
+tab <- tab[,toKeep]
+tax <- tax[toKeep,]
+
+# Final percentage of reads retained
+final <- mean( (rowSums(tab) / track$no.chim) * 100)
+
+# Writing SVs to file
+seq <- DNAStringSet(colnames(tab))
+asv.name <- paste0("ASV_", 1:ncol(tab))
+
+names(seq) <- asv.name
+writeXStringSet(seq, "./data/asv.fasta")
+
+# Changing name according to SVs
+rownames(tax) <- asv.name
+colnames(tab) <- asv.name
+
+# Constraining sister taxa (for Raxml computation if needed)
+level <- "phylum"
+fct <- as.factor(tax[,level])
+unconstrained <- paste0(names(fct[is.na(fct)]), collapse = ",")
+constrained <- by(rownames(tax), fct, paste0, collapse = ",")
+constrained <- paste0("(", constrained, ")", collapse = ",")
+constrained <- paste0("(", unconstrained, ",", constrained, ");")
+writeLines(constrained, "./data/monophylyConstraint.txt")
+
+
+### BUILDING DATASET
+# Reading metadata "as is"
+metadata <- read.table("./data/metadata.tsv", sep = "\t", 
+                       row.names = 1, header = T)
+
+rownames(tab) <- gsub("^[0-9]+F([0-9]+)_.*$", "\\1", rownames(tab))
+# Ordering metadata following OTU table
+metadata <- metadata[rownames(tab),]
+
+# Loading tree
+tree <- "./data/RAxML_bipartitions.gtrgamma_constrained"
+tree <- ape::read.tree(tree)
+
+data <- phyloseq(otu_table(tab, taxa_are_rows = F),
+                 sample_data(metadata),
+                 tax_table(tax),
+                 phy_tree(tree))
+
+reps <- sample_data(data)$replicate
+n.samples <- sum(reps == "") + nlevels(as.factor(reps)) - 1
+```
+
+```{r readCounts, results=F}
+write.xlsx(track %>% select(-known),
+           file = "tab/Table_S2.xlsx",
+           row.names=F)
+
+figure.s2 <- track %>% gather("step", "reads", -sample_id) %>%
+  mutate_at("step", fct_inorder) %>%
+  filter(step != "known") %>% 
+  mutate_at("step", fct_recode,
+            Raw = "raw",
+            `No adapter` = "no.adapt",
+            `Quality filtered` = "filtered",
+            `Denoised and Merged` = "merged",
+            `No chimeric variants` = "no.chim",
+            `Bacteria only` = "bacteria",
+            `No Chloroplast` = "no_chloroplast",
+            `No Mitochondria` = "no_mitochondria") %>%
+ggplot(aes(x = step, y = reads, group = step)) +
+  geom_quasirandom(shape = 19, size = 1.4, color = "gray10",
+                   alpha = 1/4) +
+  geom_boxplot(outlier.shape = NA, fill = "transparent") +
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication() +
+  scale_y_log10(breaks = c(10^4, 10^5, 10^6),
+                labels = trans_format("log10", math_format(10^.x)),
+                limits = c(10000, 1000000)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Read counts") +
+  xlab("Variant inference step")
+```
+
+```{r evaluation, results="asis"}
+# Evaluating clustering based on replicates
+extr <- sample_data(data)$replicate != ""
+tab.rep <- tab[extr, colSums(tab[extr,]) > 0]
+meta <- data.frame(sample_data(data)[extr,]) %>%
+  rownames_to_column("id")
+
+
+correlation <- data.frame(t(tab[extr,]), check.names = F) %>%
+  pairwise(all = F, diag = F, join.var = meta, join.by = "id") %>%
+  filter(sample_id.x == sample_id.y) %>%
+  mutate(replicate.x = as.character(replicate.x),
+         replicate.y = as.character(replicate.y)) %>%
+  # Single factor for replicates
+  mutate(rep = ifelse(replicate.x < replicate.y,
+                      paste0(replicate.x, " vs. ", replicate.y),
+                      paste0(replicate.y, " vs. ", replicate.x)))
+
+# Accuracy
+accuracy <- function(x, y){
+  tp <- sum(x > 0 & y > 0)
+  tn <- sum(x == 0 & y == 0)
+  
+  fpfn <- sum( (x > 0 & y == 0) | (x == 0 & y > 0) )
+  (tp + tn)/(tp + tn + fpfn)
+}
+
+# Correlation
+correlate <- function(x, y, method = "spearman"){
+  extr <- x > 0 & y > 0
+  cor(x[extr], y[extr], method = method)
+}
+
+correlation2 <- correlation %>%
+  group_by(subject_id.x, rep) %>%
+  summarise(r = correlate(x, y),
+            tp = sum(x > 0 & y > 0),
+            tn = sum(x == 0 & y == 0),
+            fpfn = sum( (x > 0 & y == 0) | (x == 0 & y > 0) ),
+            accuracy = (tp + tn)/(tp + tn + fpfn)) %>%
+  setNames(c("Subject id", "Contrast", "rho", "TP", "TN", "FP + FN", "Accuracy"))
+
+# Save table
+pander::panderOptions('round',2)
+pander::panderOptions('digits',2)
+pander::panderOptions('keep.trailing.zeros',TRUE)
+correlation2 <- correlation2 %>% ungroup() %>% 
+  select(`Subject id`, Contrast, rho, Accuracy)
+saveRDS(correlation2, "tab/Table_S3.rds")
+```
+
+```{r spearmanCor, results=F}
+# Mean rho value between samples
+labs <- correlation2 %>% group_by(`Subject id`) %>%
+  summarize(lab = sprintf("%.2f", mean(rho))) %>%
+  mutate(x = 1,
+         y = max(correlation$y),
+         rep = NA) %>%
+  dplyr::rename(subject_id.x = `Subject id`) 
+
+# Filtering out zeroes (they have been considered into
+# the accuracy value).
+figure.s3 <- correlation %>% filter(x > 0 & y > 0) %>%
+  sample_frac() %>%
+ggplot(aes(x = x, y = y, color = rep)) +
+  geom_point(show.legend = F, size = pt2ggSize(1)) +
+  facet_wrap(~ subject_id.x) +
+  # Log2 scale x and y axes
+  scale_x_continuous(trans = log2_trans(),
+    breaks = trans_breaks("log2", function(x) 2^x),
+    labels = trans_format("log2", math_format(2^.x))) +
+  scale_y_continuous(trans = log2_trans(),
+    breaks = trans_breaks("log2", function(x) 2^x),
+    labels = trans_format("log2", math_format(2^.x))) +
+  # Adding rho means
+  geom_text(data = labs, aes(label = lab), color = "black", 
+            show.legend = F, hjust=0, vjust = 1,
+            size = pt2ggSize(6)) +
+  # Coord equals
+  coord_equal() +
+  # Ab lines for perfect correlation
+  geom_abline(slope = 1, intercept = 0, linetype = 3,
+              size = pt2ggSize(1)) +
+  # Graphical parameters
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_color_npg(alpha = .6) +
+  xlab("Abundance of SVs in replicate 1") +
+  ylab("Abundance of SVs in replicate 2")
+```
+
+```{r rarefactionCurve}
+# Evaluating sequencing effort
+pdf(NULL)
+rare <- ggRareCurve(tab, step = 1000)
+invisible(dev.off())
+
+# Building rarefaction and slope databases
+rare <- rare$ggData %>% mutate(type = "rare")
+slope <- rareslope(tab, sample = unique(rare$sample_size)) %>%
+  data.frame() %>%
+  rownames_to_column("variable") %>%
+  gather("sample_size", "value", -variable) %>%
+  mutate(type = "slope",
+         sample_size = as.numeric(gsub("N", "", sample_size)))
+
+# Choose a scale for slope (for plotting in a second axis)
+slope_scale <- 7000
+
+# Binding into a single data frame and adding metadata
+all <- rbind(rare, slope) %>%
+  left_join(metadata %>% rownames_to_column(var = "variable"), 
+            by = "variable") %>%
+  mutate(value = ifelse(type == "slope", value * slope_scale, value))
+
+# Spitting again
+rare <- split(all, all$type)$rare
+slope <- split(all, all$type)$slope
+
+# Minimum size
+min_size <- rare %>% group_by(variable) %>%
+  summarise(m = max(sample_size)) %>%
+  pull(m) %>%
+  min
+
+# Plotting
+figure.s4 <- ggplot(all, aes(x = sample_size, y = value)) +
+  facet_wrap(subject_id ~ ., ncol = 1) +
+  # Second scale fro slope
+  scale_y_continuous(sec.axis = sec_axis(~./slope_scale, name = "Slope",
+                                         breaks = scales::pretty_breaks(2)),
+                     breaks = scales::pretty_breaks(2)) +
+  # Plotting normal samples
+  geom_line(data = subset(rare, replicate == ""), 
+            aes(group = variable), 
+            size = pt2ggSize(.7), alpha = .6) +
+  # Plotting replicates
+  geom_line(data = subset(rare, replicate != ""), 
+            aes(group = variable, color = replicate), 
+            size = pt2ggSize(.7), show.legend = T) +
+  # Plotting slope means
+  stat_summary(data = slope, geom = "line", fun.y = mean, 
+               size = pt2ggSize(.8), color = "red", linetype = 2) +
+  # Vertical lines specifying the sample with the lowes
+  # sequencing effort
+  geom_vline(xintercept = min_size, linetype = 3, color = "gray20",
+             size = pt2ggSize(.7)) +
+  # Graphical parameters
+  scale_color_brewer(palette = "Set1") +
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication() +
+  scale_x_continuous(labels = function(x) paste0(round(x/1000), "k")) +
+  ylab("Number of SVs detected") +
+  xlab("Sequencing effort")
+
+```
+```{r rep_selection, results="asis"}
+tab <- subset_samples(data, replicate != "") %>%
+  psmelt() %>%
+  group_by(Sample, subject_id, replicate) %>%
+  summarise(n = sum(Abundance)) %>%
+  arrange(subject_id, replicate) %>%
+  ungroup()
+
+best.rep <- tab %>%
+  group_by(subject_id) %>%
+  summarize(s = Sample[n == max(n)]) %>%
+  pull(s)
+
+table.s4 <- tab %>% 
+  mutate(Sample = ifelse(Sample %in% best.rep, paste0(Sample, "*"), Sample)) %>%
+  dplyr::rename(Sample_id = Sample)
+
+best.rep <- c(subset_samples(data, replicate == "") %>% 
+                sample_names(), best.rep)
+data <- prune_samples(best.rep, data)
+
+# rooting tree using midpoint rooting (phangorn package)
+tree <- phy_tree(data)
+phy_tree(data) <- phangorn::midpoint(tree)
+```
+
+```{r goodsCov, results="asis"}
+div <- getDiversityIndexes(t(otu_table(data))) %>%
+  select(-Chao1_richness, -Shannon_diversity, -InvSimpson, -Evenness) %>%
+  rename_all(gsub, pattern="Number_of_", replacement="") %>%
+  rename_all(Hmisc::capitalize) %>%
+  dplyr::rename(ASVs = OTUs)
+
+goods_mean <- mean(div$Good_coverage_estimator)
+goods_sd <- sd(div$Good_coverage_estimator)
+
+goods_range <- range(div$Good_coverage_estimator)
+```
+
+```{r goodsCovPrint, results="asis"}
+div %>% rownames_to_column("Sample_id") %>%
+  mutate(Good_coverage_estimator = Good_coverage_estimator %>% 
+           round(2) %>% as.character()) %>%
+write.xlsx("tab/Table_S5.xlsx", row.names = F)
+```
+
+```{r phyTree, results=F}
+tree <- phy_tree(data) # Getting the tree
+groups <- split(rownames(tax), tax[,"phylum"]) # grouping phyla
+t <- ggtree::groupOTU(tree, groups) # adding groups to the tree
+
+`%<+%` <- ggtree::`%<+%` # alias for ggtree function
+
+# Making the plot
+figure.s5 <- ggtree::ggtree(t, layout = "rectangular", ladderize=T, size = pt2ggSize(.5)) %<+% 
+  data.frame(id = rownames(tax), tax, stringsAsFactors = F) + 
+  # If you want to display bootsrap values uncomment these lines
+  # ggtree::geom_text2(aes(label=label, subset = !is.na(as.numeric(label)) &
+  #                  as.numeric(label) > 50)) +
+  ggtree::geom_tippoint(aes(fill = phylum), 
+                        shape = 21, size = pt2ggSize(4),
+                        stroke = pt2ggSize(.5)) +
+  ggtree::geom_treescale(x=0, y=t$Nnode, offset = 50) +
+  scale_fill_npg(na.value = "gray60", 
+                 labels = function(x){
+                   x[is.na(x)] <- "unknown"
+                   x
+                 }) +
+  theme_publication(grid = F) +
+  theme(legend.title = element_blank()) +
+  guides(fill = guide_legend(override.aes = list(size = pt2ggSize(5))))
+
+# To color the tree based on groups use the code here reported
+# ggtree::ggtree(t, aes(color = group), layout = "slanted") %<+% 
+#   data.frame(id=rownames(tax), tax) +
+#   theme(legend.position="right") 
+```
+
+```{r clustering}
+# Computing prevalence
+mat <- psmelt(data) %>%
+  group_by(days, OTU) %>%
+  summarise(degree = sum(Abundance > 0)) %>%
+  ungroup() %>%
+  spread(days, degree)
+
+# Extracting days (for plotting)
+days <- unique(sample_data(data)$days) + 1
+
+# Building matrix of series (one per row)
+# Matrix is scaled and centered for clustering
+X <- scale(as.matrix(mat[,-1]), 
+           center = T, scale = T)
+rownames(X) <- pull(mat, OTU)
+
+# Clustering of samples based on dtw distance
+# partitional clustering, centroids are calculated
+# using the "pam" funciton (Partitioning Around Medoids)
+silhouette <- 2:10 %>%
+  map(~tsclust(X, type="partitional", k=.x,
+               distance="dtw_basic", 
+               centroid = "pam",
+               seed=1234, trace=F)) %>%
+  map(function(x) x@cluster) %>%
+  # Compute internal clustering criteria
+  # for each number of cluster (silhouette index)
+  map(~intCriteria(X, ., "silhouette")) %>%
+  map_dbl(unlist) %>%
+  append(., 0, after=0) %>%
+# uilding data frame for plotting
+data.frame(k=1:length(.), sil=.) %>%
+  ggplot(aes(x=k, y=sil)) +
+  # marking the end of the Mars500 experiment
+  geom_vline(xintercept = 2, linetype = 2, 
+             size = pt2ggSize(.5)) +
+  geom_line(size = pt2ggSize(1)) +
+  geom_point(shape = 21, fill = "white", 
+             stroke = pt2ggSize(1),
+             size = pt2ggSize(4)) +
+  theme_classic(base_family = "Helvetica", base_size = 8) +
+  theme_publication(grid = F) +
+  scale_x_continuous(breaks = 1:10) +
+  scale_y_continuous(expand = expand_scale(mult = c(.02, 0)),
+                     limits = c(0,.6), breaks = seq(0,.6, .2)) +
+  coord_cartesian(clip = "off") +
+  xlab("Number of clusters") +
+  ylab("Silhouette score")
+
+# The number of cluster with the highest Silhouette value
+# is 2. Performing clustering with k = 2
+dtw_cluster <- tsclust(X, type="partitional", k=2,
+                       distance="dtw_basic", 
+                       centroid = "pam",
+                       seed=1234, trace=F)
+
+# Getting clusters
+clusters <- dtw_cluster@cluster
+
+# Getting centroids (they could be used
+# in the relative presence plot)
+centroids <- bind_cols(dtw_cluster@centroids)
+# Unscale centroids
+centroids <- centroids * attr(X,"scaled:scale") + attr(X, "scaled:center")
+# Transform into relative abundance
+n.obs <- mat %>% select(-OTU) %>%
+  summarise_all(max) %>%
+  t() %>%
+  as.vector()
+centroids <- centroids / n.obs
+centroids <- centroids %>% 
+  mutate(Time = as.numeric(colnames(X))) %>%
+  gather("group", "value", -Time) %>%
+  mutate(group = str_replace(group, "V", "Cluster "))
+
+# Plotting mean values of prevalence in each timepoint
+# grouped according to clustering
+prevTime <- mat %>% 
+  mutate_if(is.numeric, function(x) x/max(x)) %>%
+  mutate(group = factor(paste("Cluster", dtw_cluster@cluster))) %>%
+  gather("Time", "value", -group, -OTU) %>%
+  mutate(Time = as.numeric(Time) + 1) %>%
+ggplot(aes(x = Time, y = value, color = group)) +
+    geom_vline(xintercept = 520, linetype = 2, size = pt2ggSize(.5)) +
+  stat_summary(geom = "line", fun.y = mean, size = pt2ggSize(1)) +
+  stat_summary(geom = "errorbar", fun.data = mean_cl_boot,
+               size = pt2ggSize(1), width = 8) +
+  stat_summary(geom = "point", fun.y = mean, 
+               shape = 21, fill = "white",
+               stroke = pt2ggSize(1),
+               size = pt2ggSize(4)) +
+  # To include centroids uncomment the following line
+  # geom_line(data = centroids) +
+  scale_color_npg() +
+  theme_classic(base_family = "Helvetica", base_size = 8) +
+  theme_publication(grid = F, legend.position = "right",
+                    legend.direction = "vertical") +
+  scale_y_continuous(limits = c(0,1), expand = c(0,0),
+                     breaks = c(0, .5, 1),
+                     labels = function(x) x*100) +
+  theme(legend.title = element_blank(),
+        legend.justification = c(0,1),
+        legend.position = c(0.01,1)) +
+  xlab("Days") +
+  ylab("Persistence (%)")
+
+# Plotting abundance in each time point
+# of the two groups
+joined.full <- psmelt(data) %>%
+  left_join(data.frame(OTU=pull(mat, OTU), 
+                       group = dtw_cluster@cluster))
+
+# Heatmap (time points and abundance)
+log2p_trans <- trans_new("log2p",
+                         function(x) log2(x+1),
+                         function(y) (2^y)-1,
+                         domain=c(0, Inf),
+                         format = function(x){
+                           val <- round(x/1000, digits = 2)
+                           ifelse(x == 0, "0",
+                                  paste0(val, "k"))
+                           })
+
+heat_map <- joined.full %>%
+  mutate(x = paste(subject_id, days, "_")) %>%
+  mutate(days = days + 1,
+         group = paste("Cluster", group),
+         OTU = fct_reorder(OTU, Abundance, .fun = sum)) %>%
+ggplot(aes(x = x, y = OTU, fill = Abundance)) +
+  geom_tile() +
+  facet_grid(group ~ days, scales = "free", space = "free") +
+  scale_fill_viridis_c("Abundance", option = "D", 
+                       trans = log2p_trans, 
+                       breaks = c(0, 10, 100, 1000, 10000)) +
+  theme_minimal(base_size = 8, base_family = "Helvetica") +
+  theme_publication(ticks = F, legend.direction = "vertical",
+                    legend.position = "right") +
+  theme(axis.text = element_blank(),
+        strip.text.y = element_text(angle = 0),
+        panel.spacing = unit(.1, "lines")) +
+  guides(fill = guide_colorbar(barheight = unit(6, "lines"))) +
+  xlab("Subjects") +
+  ylab("ASVs")
+
+p1 <- plot_grid(silhouette, prevTime, 
+                nrow = 1, labels = letters[1:2])
+figure.s8 <- plot_grid(p1, heat_map, ncol = 1, labels = c("", letters[3]))
+```
+
+```{r prevAbun}
+# Prevalence Vs Abundace
+# Abundance is the mean abundance in all
+# samples and in all time points
+prevAb <- joined.full %>%
+  mutate(group = paste0("Cluster ", group)) %>%
+  group_by(OTU, group) %>%
+  summarise(prevalence = sum(Abundance > 0)/n(),
+            abundance = mean(Abundance))
+
+# Modelling (linear model with log-transformed data)
+mod.prevAb <- lm(log2(abundance+1)~prevalence , data = prevAb)
+model_layer <- function(model, ...){
+  geom_abline(intercept = coef(model)[1],
+              slope = coef(model)[2],
+              ...)}
+
+# Plotting overall model (MAIN TEXT)
+plot.prevAb <- prevAb %>%
+  filter(prevalence > 0, abundance > 0) %>%
+ggplot(aes(x = prevalence, y = abundance)) +
+  geom_point(aes(color = group), alpha = 0.5) +
+  # geom_smooth(method = "lm", formula = y ~ x) +
+  model_layer(mod.prevAb) +
+  theme_classic(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  scale_y_continuous(trans = log2p_trans, 
+                     expand = expand_scale(add=c(0.15,0)),
+                     breaks = c(0, 10, 100, 1000, 10000),
+                     limits = c(0, 10000)) +
+  scale_x_continuous(expand = expand_scale(add=c(0.01, 0)),
+                     labels = function(x) x * 100) +
+  scale_color_npg() +
+  coord_cartesian(clip = "off", expand = T) +
+  xlab("Persistence (%)") +
+  ylab("Abundance") +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) +
+  theme(legend.title = element_blank())
+saveRDS(list(model = mod.prevAb, plot = plot.prevAb), 
+        "./data/persistence_abundance.rds")
+
+# Plotting at each time point
+figure.s9 <- joined.full %>%
+  mutate(group = paste0("Cluster ", group)) %>%
+  group_by(OTU, group, days) %>%
+  summarise(prevalence = sum(Abundance > 0)/n(),
+            abundance = mean(Abundance)) %>%
+  filter(prevalence > 0, abundance > 0) %>%
+ggplot(aes(x = prevalence, y = abundance)) +
+  geom_quasirandom(aes(color = group), alpha = 0.5) +
+  facet_wrap(~ days) +
+  model_layer(mod.prevAb) +
+  scale_y_continuous(trans = log2p_trans,
+                     breaks = c(0, 10, 100, 1000, 10000),
+                     limits = c(0, 10000)) +
+  scale_x_continuous(labels = function(x) x * 100) +
+  theme_bw(base_size = 8, base_family = "Helvetica") +
+  theme_publication(grid = F) +
+  theme(legend.title = element_blank()) +
+  scale_color_npg() +
+  guides(color = guide_legend(override.aes = list(alpha = 1))) +
+  xlab("Persistence (%)") +
+  ylab("Abundance")
+```
+
+```{r enrich}
+# Enrichment (data/enrichment.R)
+X <- as.matrix(mat[,-1])
+cat <- tax_table(data) %>% 
+  as.matrix()
+class(cat) <- "matrix"
+
+enrichment <- colnames(cat)[1:6] %>%
+  set_names() %>%
+  map_df(function(rank){
+    cat.selected <- cat[,rank]
+    enrich(grp = clusters, 
+           categories = cat.selected)
+  }, .id = "rank")
+```
+
+```{r, savingData}
+groups <- data.frame(vertex.names = as.character(mat[[1]]),
+                     cluster = paste("Cluster", dtw_cluster@cluster))
+
+taxa <- as(tax_table(data), "matrix") %>%
+  as_tibble(rownames = "vertex.names") %>%
+  left_join(groups, by = "vertex.names") %>%
+  data.frame(row.names = 1) %>%
+  as.matrix()
+
+tax_table(data) <- tax_table(taxa)
+saveRDS(data, file = "data/phylo_obj.rds")
+
+tree <- phy_tree(data)
+tax <- tax_table(data)[tree$tip.label,] %>% 
+  as.matrix()
+class(tax) <- "matrix"
+
+cls <- lapply(unique(tax[,"cluster"]), function(x){
+  grep(x, tax[,"cluster"])
+})
+names(cls) <- unique(tax[,"cluster"])
+tree <- groupOTU(tree, cls, "Cluster")
+
+tree.plot <- ggtree(tree, layout = "rectangular", 
+               ladderize=T, size = pt2ggSize(.5)) %<+% 
+  data.frame(id = rownames(tax), tax, stringsAsFactors = F)
+
+enrich <- enrichment %>% 
+  filter(adj.p.value < 0.05, log2.fold.enrichment > 1) %>%
+  apply(1, function(x){
+    what <- x[3]
+    rank <- x[1]
+    node <- MRCA(as_tibble(tree), 
+                 which(tax[,rank] == what))$node
+    data.frame(what = x[3], rank = x[1], group = x[2],
+               node = node)
+  }) %>%
+bind_rows()
+```
+
+```{r dietVariation}
+# Prepare data for taxonomic evaluation
+glom <- data
+sample_data(glom) <- sample_data(glom) %>%
+  data.frame(check.names = F) %>%
+  mutate_at("food", ~fct_relevel(., c("first variant", "third variant", "normal"))) %>%
+  mutate_at("food", ~fct_recode(., FV = "first variant", 
+                                TV = "third variant", 
+                                NR = "normal")) %>%
+  mutate_at("collection_date", ~factor(as.Date(.))) %>%
+  `rownames<-` (sample_names(data)) %>%
+  sample_data()
+
+# Preparing taxa table to avoid redundant genera
+taxa <- as(tax_table(glom), "matrix")
+taxa <- taxa[,-ncol(taxa)]
+taxa[,"genus"] <- str_replace(taxa[,"genus"], "^\\[(Eubacterium)\\] .*$", "\\1")
+taxa[,"genus"] <- str_remove(taxa[,"genus"], " [0-9]$")
+
+# Modifying Eubacterium assignments according to NCBI taxonomy
+taxa[grep("Eubacterium", taxa[,"genus"]), "family"] <- "Eubacteriaceae"
+taxa <- taxa[,-ncol(taxa)]
+
+tax_table(glom) <- tax_table(taxa)
+
+# Filtering (same parameters used in the main text)
+pers.perc <- 0.05
+pers.cut <- nsamples(glom)*pers.perc
+ab.cut <- 10
+glom <- filter_taxa(glom, function(x) sum(x > 0) > pers.cut & sum(x) > ab.cut, T)
+
+# Collapsing by genus
+glom <- tax_glom(glom, "genus")
+taxa_names(glom) <- as.vector(as(tax_table(glom), "matrix")[,"genus"])
+
+# Scaling using DESeq2
+glom.dds <- phyloseq_to_deseq2(glom, ~ subject_id + days + food)
+glom.dds <- suppressMessages(
+  estimateSizeFactors(glom.dds, type = "poscounts")
+)
+
+x <- t(counts(glom.dds, norm = T))
+otu_table(glom) <- otu_table(x, taxa_are_rows = F)
+taxa_names(glom) <- as(tax_table(glom), "matrix")[,"genus"]
+
+# Transformin counts into relative abundances
+glom.data <- transform_sample_counts(glom, function(x) x/sum(x)) %>%
+  psmelt()
+
+### Manual adjustment of labels
+glom.data <- glom.data %>% 
+  group_by(phylum) %>%
+  mutate(ord = -n())
+
+# Taxa with UCG tag will be reported using the
+# tag only
+ucg <- str_match(glom.data$OTU, "(.*) (UCG-[0-9]+)")
+
+# Genus FXXXXX will be reported together with the
+# family
+extr <- grep("F[0-9]+", glom.data$OTU)
+merged <- apply(glom.data[extr, c("family", "genus")], 1, paste, collapse = " ")
+ucg[extr,] <- as.matrix(cbind( merged, glom.data[extr, c("family", "genus")]))
+
+# "baculum" will be abbreviated
+extr <- grep("baculum", glom.data$OTU)
+ucg[extr,] <- cbind(glom.data$OTU, glom.data$OTU, gsub("baculum", "", glom.data$OTU))[extr,]
+
+# Peptostreptococcus will be abreviated
+extr <- grep("Peptostreptococcus", glom.data$OTU)
+ucg[extr,] <- rep(c("Peptostreptococcus", "Peptostreptococcus", "Peptostrept"),
+                  each = length(extr))
+
+extr <- grep("Staphylococcus", glom.data$OTU)
+ucg[extr,] <- rep(c("Staphylococcus", "Staphylococcus", "Staphylo"),
+                  each = length(extr))
+
+extr <- grep("Corynebacterium", glom.data$OTU)
+ucg[extr,] <- rep(c("Corynebacterium", "Corynebacterium", "Coryne"),
+                  each = length(extr))
+
+
+# Building a dataset with abbreviation and labels
+# V3 = abbreviations
+# V1 = labels
+ucg <- ucg %>% as_tibble() %>%
+  mutate(i = row_number()) %>%
+  drop_na() %>%
+  mutate(ord = glom.data$ord[i]) %>%
+  arrange(ord, V3) %>%
+  mutate(V3 = fct_inorder(V3)) %>%
+  mutate(r = as.numeric(V3),
+         super = letters[r]) %>%
+  mutate(lab = paste0(V3, "^{", super, "}"),
+         descr = paste0(super, ": ", V1))
+
+glom.data$OTU[ucg$i] <- ucg$lab
+glom.data$OTU <- str_replace(glom.data$OTU, "Candidatus ", "")
+
+# Wilcoxon test function
+# data = data frame
+# fct = the name of the grouping variable
+# y = the name of the continous variable
+wilcox.multiple <- function(data, fct, y){
+  frm <- as.formula(paste0(y,"~", fct))
+  fct <- get(fct, data)
+  
+  lvl <- combn(levels(fct), 2, simplify = F)
+  res <- lapply(lvl, function(cntr){
+    w <- wilcox.test(frm, data = data[fct %in% cntr,])
+    contrast <- paste0(cntr, collapse = "_")
+    data.frame(contrast = contrast, W = w$statistic, p = w$p.value,
+               row.names = NULL)
+  })
+  do.call(rbind, res)
+}
+
+# Performing tests and adjusting p.value 
+w.res <- glom.data %>% split(.$OTU) %>%
+  map_df(wilcox.multiple, "food", "Abundance", 
+         .id = "OTU") %>%
+  mutate(padj = p.adjust(p, "BH"))
+
+# Prepare data for plotting
+plot.data <- glom.data %>%
+  group_by(OTU, food) %>%
+  summarise(mean = mean(Abundance),
+            se = sd(Abundance)/sqrt(length(Abundance)),
+            max = mean + se,
+            min = mean - se,
+            phylum = unique(phylum),
+            class = unique(class),
+            order = unique(order),
+            family = unique(family),
+            genus = unique(genus)) %>%
+  ungroup()
+
+# Reordering OTU based on mean abundace 
+# of phylum
+plot.data <- plot.data %>%
+  mutate_at("OTU", factor) %>%
+  group_by(phylum) %>%
+  mutate(ord = -n()) %>%
+  ungroup() %>%
+  mutate(OTU = fct_reorder(OTU, ord, .fun = unique))
+
+# Getting max values for significance
+# segments
+plot.max <- plot.data %>% 
+  group_by(OTU) %>%
+  summarise(max = max(max))
+
+# Building significant segments
+sign.segment <- w.res %>% 
+  mutate(OTU = fct_relevel(OTU, levels(plot.data$OTU))) %>%
+  filter(padj < 0.05) %>%
+  separate(contrast, into = c("x", "xend"), sep = "_") %>%
+  mutate_at(c("x", "xend"), factor, levels = levels(plot.data$food)) %>%
+  left_join(plot.max, by = "OTU") %>%
+  group_by(OTU) %>%
+  mutate(y.skew = max + ((max * .1) * 1:n()) )
+
+# Labels for significance
+sign.lab <- sign.segment %>%
+  mutate_at(c("x", "xend"), as.numeric) %>%
+  mutate(x = ((xend - x)/2) + x,
+         lab = ifelse(padj < 0.01, "**", "*"))
+
+# Building captions for abbreviated genera
+caption <- ucg %>% arrange(r) %>%
+  pull(descr) %>% unique() %>%
+  paste(collapse = "\n")
+
+# Plotting
+p <- plot.data %>%
+ggplot(aes(x = food, y = mean)) +
+  geom_errorbar(aes(ymin = min, ymax = max), width = .3) +
+  geom_col(aes(fill = phylum)) +
+  geom_segment(data = sign.segment, aes(xend = xend, x = x,
+                                        y = y.skew, yend = y.skew)) +
+  geom_text(data = sign.lab, aes(x = x, y = y.skew, label = lab)) +
+  facet_wrap(~ OTU, scales = "free_y", ncol = 8,
+             labeller = label_parsed) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)),
+                     labels = function(x) round(x * 1000, 2),
+                     breaks = scales::pretty_breaks(2),
+                     position = "right") +
+  theme_minimal(base_size = 6, base_family = "Helvetica") +
+  theme_publication(grid = "y") +
+  scale_fill_npg() +
+  labs(caption = caption) +
+  theme(plot.caption.position = "panel",
+        plot.caption = element_text(hjust = 0),
+        axis.title.x = element_blank(),
+        plot.margin = unit(c(.1,.1,.1, 1), "lines"),
+        legend.title = element_blank(),
+        panel.border = element_rect(fill="transparent"),
+        panel.spacing.y = unit(.2, "lines"),
+        panel.spacing.x = unit(.5, "lines"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)) +
+  ylab("Abundance (\u2030)")
+
+# Remove facet clipping 
+pg <- ggplotGrob(p)
+for(i in which(grepl("strip-t", pg$layout$name))){
+  pg$grobs[[i]]$layout$clip <- "off"
+}
+
+figure.s6 <- plot_grid(pg)
+```
+
+# Supplementary Tables
+
+```{r Table_S1, results="asis"}
+full <- read.table("./data/whole_experiment.csv", sep = "\t", header = T)
+pander::pander(full, caption="__Table S1: Full experiment timetable.__ The Mars500 project consisted of  three isolation experiments: two pilot studies (14 and 105 days, completed in November 2007 and July 2009, respectively) and the main 520-day study. All studies were conducted inside an isolation facility that was built in the Institute of Biomedical Problems (IBMP) of the Russian Academy of Sciences located in Moscow.")
+```
+
+__Table S2: Number of reads retained during the amplicon sequence variant inference.__ The number of reads retained after each step of analysis is reported in different columns: sample_id, id of the sample included in the study; raw, sequencing depth in the raw file; no.adapt, number of reads retained after primer removal step; filtered, number of quality filtered reads; merged, number of forward and reverse reads correctly merged; no.chim, number of reads retained after chimeric removal step; bacteria, read assigned (at least) to Bacteria domain; no_chloroplast, number of reads retained after Chloroplast removal; no_mitochondria, number of reads retained after Mitochondria removal.
+
+```{r Table_S3, results="asis"}
+pander::pander(correlation2, caption = "__Table S3: Accuracy and correlation between replicates.__ Contrasts are reported in the contrast column whereas subject id refers to the subject that has been processed. Spearman's rank correlation coefficient was reported in the \"rho\" column. Accuracy was estimated as reported in Supplementary method section.", split.tables = Inf)
+```
+
+```{r Table_S4, results="asis"}
+pander::pander(table.s4, caption = "__Table S4: Number of reads assigned to SVs for each replicate.__ Replicate with the highest number of sequences assigned to SVs were selected and retained for subsequent analyses whereas other replicates were removed. Selected samples were marked with an asterisk.", split.tables = Inf)
+```
+
+__Table S5: Good's coverage estimator for each sample.__ Sample_id, id of samples included in the study; Clones, number of reads correctly processed and assigned to an ASV; ASVs, number of sequence variants detected for each sample; Singletons, number of ASVs with only one reads mapped in a sample; Doubletons, number of ASVs with two reads mapped in a sample; Good_coverage_estimator, Good's coverage estimator.
+
+```{r Table_S6, results="asis"}
+table.s6 <- psmelt(data) %>%
+  group_by(phylum) %>%
+  summarise(ab = sum(Abundance),
+            N = length(unique(OTU))) %>%
+  mutate(phylum = fct_explicit_na(phylum, "Unknown")) %>%
+  mutate(phylum = fct_reorder(phylum, ab)) %>%
+  mutate(phylum = fct_relevel(phylum, "Unknown", after = 0)) %>%
+  mutate(Percentage = (ab/sum(ab)) * 100) %>%
+  dplyr::rename(`Abundance (reads' count)` = "ab") %>%
+  arrange(desc(phylum)) %>%
+  select(-N, everything())
+saveRDS(table.s6, "./tab/Table_S6.rds")
+pander::pander(table.s6, caption = "__Table S6: Overall abundance and percentage of reads assigned to bacterial Phyla.__ The abundance column reports the number of reads assigned to all ASVs with the same phylum classification. The number of ASVs assigned to each phylum was reported in the N column. The abundance was divided by the total amount of reads produced for the whole experiment and reported as percentage. Bacterial ASVs with no phylum classification were reported as \"Unknown\".")
+```
+
+```{r Table_S7, results="asis"}
+X <- otu_table(data)
+div <- sample_data(data) %>%
+  as("data.frame") %>%
+  mutate(invsimpson = diversity(X, index = "invsimpson"),
+         richness = specnumber(X),
+         food = fct_recode(food, FV = "first variant", 
+                           TV = "third variant", NR = "normal"),
+         food = fct_relevel(food, "FV", "TV", "NR"))
+
+div.anova <- aov(invsimpson ~ experiment + food + subject_id, data = div)
+saveRDS(div.anova, "./tab/Table_S7.rds")
+div.anova <- apa_print(div.anova)
+pander::pander(div.anova$table, caption = "__Table S7: Analysis of variance model.__ The effect of diets, subjects, and the permanence into the isolation facility (experiment) on alpha diversity (inverse-Simpson index) was explored using a one-way analysis of variance (ANOVA). No significant effect was found. F, value of F-statistic; df1 and df2, degrees of freedom available for the considered factor and total degrees of freedom; MSE, mean square error;  p, p-values corresponding to the given F-statistic; ges, effect-size measured as generalized eta-squared.")
+```
+
+```{r Table_S8, results="asis"}
+div.lm <- lmer(invsimpson ~ days + (1|subject_id), data = div, REML = FALSE)
+table.s8 <- summary(div.lm) %>%
+  coef(.) %>%
+  as.data.frame(.) %>%
+  mutate(Effect = papaja:::prettify_terms(rownames(.))) %>%
+  filter(Effect != "Intercept") %>%
+  select(Effect, everything()) %>%
+  dplyr::rename(
+    "$b$" = "Estimate"
+    , "SE" = "Std. Error"
+    , "$df$" = "df"
+    , "$t$" = "t value"
+    , "$p$" = "Pr(>|t|)"
+  ) %>%
+  mutate(Effect = str_c("    ", Effect)) %>%
+  printnum(digits =  c(0, 3, 3, 2, 2, 3))
+
+saveRDS(div.lm, "./tab/Table_S8.rds")
+pander::pander(table.s8, caption = "__Table S8: Mixed effect model fitting with Satterthwaite approximation.__ The effect of days on the overall bacterial diversity (inverse-Simpson index) was explored through a mixed effect model with random intercept. Subjects were taken as blocking factor and p-values were obtained using the Satterthwaite approximation implemented in the lmerTest R package (version 3.1). No significant effect was found. $b$, regression parameter (Days: slope of the model; Post-isolation: difference in the intercept); SE, standard error; $t$, t-value (also known as \"standardized\" regression parameter); $df$, degrees of freedom; $p$, p-value.")
+```
+
+```{r Table_S9, results="asis"}
+table.s9 <- readRDS("./tab/Table_S9.rds")
+rownames(table.s9) <- NULL
+pander::pander(table.s9, caption = "__Table S9: Mixed effect model with Satterthwaite approximation.__ The effect of time on the number of formed and destroyed edges in the community network was tested using mixed effect models. Subjects were used as blocking factor and p-values were obtained using the Satterthwaite approximation implemented in the lmerTest R package (version 3.1). $b$, regression parameter (Days: slope of the model; Post-isolation: difference in the intercept); SE, standard error; $t$, t-value (also known as \"standardized\" regression parameter); $df$, degrees of freedom; $p$, p-value.", missing = "")
+```
+
+::: {custom-style="compactLegend"}
+__Table S10: Number of ASVs reporting a trend of diversity similar to the whole within-subject diversity.__ Results of the linear models were reported for each ASVs and for each subject. Subject, the id of the crewmember; ASV, the id of the amplicon sequence variant detected; F, value of F statistic; df1 and df2, degrees of freedom used for F statistic calculation; p, p-values ; p.adj, Benjamini & Hochberg corrected p-values; domain, phylum, class, order, family, and genus, taxonomic classification of ASVs; cluster, the cluster to which a given ASV belongs.
+:::
+
+# Supplementary Figures
+
+```{r Figure_S1, fig.cap="__Figure S1: Evaluation of the performance of Silva SSU and HOMD databases for taxonomic annotation of amplicon sequence variants.__ a) Number of amplicon sequence variants (ASVs) taxonomically resolved with Silva SSU (y axis) and HOMD (x axis). Both axes reports the percentage of taxonomically annotated ASVs in respect to the total number of variants detected by the DADA2 pipeline. Taxonomic levels (from Domain to Genus) are reported using different colors. b) Number of ASVs with unknown taxonomic classification at different resolutions. Values were reported using the same criteria described for panel a. c) Number of ASVs taxonomically annotated with both datasets at different taxonomic resolutions. The number of concordant assignments (namely those reporting the same taxonomic classification in both databases) was reported in blue whereas the number of discordant classifications was reported in red. d) Number of reads recovered after removing ASVs not assigned at the lowest taxonomic resolution available (namely the Domain level). Values were reported as percentages in respect with the total number of ASVs reconstructed by the DADA2 pipeline.", fig.width=5.5, fig.height=5.5}
+figure.s1
+```
+
+```{r Figure_S2, fig.cap="__Figure S2: Number of reads retained after each step of the DADA2 workflow.__", fig.width=5, fig.height=3}
+figure.s2
+```
+
+```{r Figure_S3, fig.cap="__Figure S3: Counts of individual SVs for each replicate.__ The abundance of every SV is reported for the three pairwise combinations using the log2-scale. Colors represent comparisons between replicates (a vs. b red dots, a vs. c blue dots, and b vs. c green dots) whereas subjects were reported in different panels. Dotted lines represent a perfect correlation (namely a line with slope equal to one and intercept equal to zero) whereas the average value of the Spearman's correlation coefficient was reported at the top left of each panel.", fig.width=5, fig.height=2.5}
+# Mean accuracy value between samples
+plot_accuracy <- F
+if(plot_accuracy){
+  labs <- correlation2 %>% group_by(`Sample id`) %>%
+    summarize(lab = sprintf("%.2f", mean(Accuracy))) %>%
+    mutate(x = 1,
+           y = max(correlation$y),
+           rep = NA) %>%
+    dplyr::rename(sample_id.x = `Sample id`)
+  # Getting labs to paste next to sample id
+  labs <- labs$lab[match(correlation2$`Sample id`, labs$sample_id.x)]
+  
+  p2 <- correlation2 %>%
+    ungroup() %>%
+    select(-rho) %>%
+    gather("type", "value", -`Sample id`, -Contrast) %>%
+    mutate(`Sample id` = paste0(`Sample id`, " (", labs, ")")) %>%
+    ggplot(aes(x = Contrast, y =value, fill = type)) +
+    geom_col() +
+    facet_wrap(~ `Sample id`, nrow = 1) +
+    theme_bw(base_size = 8, base_family = "Helvetica") +
+    theme_publication(grid = F) +
+    scale_fill_aaas(alpha = .7) +
+    theme(legend.title = element_blank()) +
+    ylab("Counts")
+  ggarrange(figure.s3, p2, heights = c(2, 1), labels = letters[1:2], ncol = 1)
+}else{
+  figure.s3
+}
+```
+
+```{r Figure_S4, fig.cap="__Figure S4: Number of SVs detected (left side vertical axis) with increasing sequencing effort (horizontal axis).__ The average slope of rarefaction curves was reported with a dashed line (right side vertical axis). Vertical lines represent the sample with the lowest number of reads assigned to a SVs. Rarefaction curves were computed with an increasing step of 1000 reads. Samples that were sequenced multiple times (technical replicates) were reported with different colors.", fig.width=4, fig.height=5}
+figure.s4
+```
+
+```{r Figure_S5, fig.cap="__Figure S5: Phylogenetic reconstruction of ASVs.__ Phyla were reported with different colors whereas SVs with unknown phylum attribution were reported in gray. The distance scale is reported in the top left of the plot.", fig.height=8, fig.width=6}
+figure.s5
+```
+
+```{r Figure_S6, fig.cap="__Figure S6: Bacterial genera detected in different diets.__ Normalized counts were transformed into parts per thousand and reported in different panels according the the genus attribution. Diets are reported in the x-axis whereas the mean abundance was reported in the y-axis together with the standard error on the mean (error bars). Mann-Whitney test detected significant changes in bacterial distribution according to diet that were reported using asterisks (*, p < 0.05; **, p < 0.01; Benjamini & Hochberg correction).", fig.width=6.65, fig.height=8.8}
+figure.s6
+```
+
+
+```{r Figure_S7, fig.cap="__Figure S7: Changepoint detection analysis based on differences within crewmembers (a) and differences between crewmembers (b).__ Each step of analysis is reported in different panels from top to bottom: changepoint analysis on all crewmembers, genetic algorithm selection of changepoints producing relevant trends of beta diversity, linear model/s fitting after removal of non-significant changepoint/s."}
+figure.s7 <- readRDS("./data/cp/changepoint_analysis.rds")
+figure.s7
+```
+
+```{r Figure_S8, fig.cap="__Figure S8: Clustering of ASVs based on time-resolved persistence The number of subject in which a given ASV was detected was computed at each time point (persistence).__ The dynamic time warping (DTW) approach was used to cluster ASVs with increasing number of clusters. a) The number of clusters maximizing the Silhouette score was chosen as the best value. b) The prevalence of ASVs assigned to each cluster was plotted along time, whereas c) abundance values was reported as a heatmap."}
+figure.s8
+```
+
+
+```{r Figure_S9, fig.cap="__Figure S9: Persistence and abundance of ASVs detected at different time points.__ Persistence was expressed as the number of samples in which a given ASV was detected whereas abundance was expressed as log-normalized number of reads assigned to a given ASV (linear regression was reported as a black line (95% CI [9.81, 10.38], t(1926) = 70.27, p < 0.001). Clusters were reported using different colors."}
+figure.s9
+```
