@@ -1,4 +1,4 @@
-# Mars500 Oral Microbiome [![made-with-Markdown](https://img.shields.io/badge/Made%20with-Markdown-1f425f.svg)](http://commonmark.org)
+# Mars500 Oral Microbiome [![Generic badge](https://img.shields.io/badge/Made_with-R_Markdown-blue.svg)](https://shields.io/)
 
 <img alt="Logo of the project «Mars-500».svg" src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Logo_of_the_project_%C2%ABMars-500%C2%BB.svg/170px-Logo_of_the_project_%C2%ABMars-500%C2%BB.svg.png" width="170" height="119" align="right">
 
