@@ -24,9 +24,9 @@ The two main fodlers of the repository are called `SM` and `main` and refer to s
     
     <details>
      <summary><b>Details</b></summary>
-    1. `SM/data/cp` folder: contains the code used for change point analysis  
-    2. `SM/data/taxa` foder: contains the code for database comparison  
-    3. `SM/data/all_seqtab_nochim.rds`: ASV table without filtering  
+    1. `SM/data/cp` folder: contains the code used for change point analysis<br>
+    2. `SM/data/taxa` foder: contains the code for database comparison<br>
+    3. `SM/data/all_seqtab_nochim.rds`: ASV table without filtering<br>
     4. `SM/data/phylo_obj.rds`: phyloseq object containing the final counts, metadat, and taxonoic assignments
     </details>
 
