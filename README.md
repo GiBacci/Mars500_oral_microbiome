@@ -23,11 +23,11 @@ The two main fodlers of the repository are called `SM` and `main` and refer to s
 2. `data` folder: contains data that is loaded into the R environment to generate figures and external scripts used for time-consuming tasks
     
     <details>
-     <summary><b>Show instructions</b></summary>
-1. Install the preset
-    
-2. Add the `size-limit` section and the `size` script to your `package.json`
-
+     <summary><b>Details</b></summary>
+    1. `SM/data/cp` folder: contains the code used for change point analysis  
+    2. `SM/data/taxa` foder: contains the code for database comparison  
+    3. `SM/data/all_seqtab_nochim.rds`: ASV table without filtering  
+    4. `SM/data/phylo_obj.rds`: phyloseq object containing the final counts, metadat, and taxonoic assignments
     </details>
 
 3. `tab` folder (SM only): supplementary tables are saved into this folder during `knitr` rendering of supplementary materials. Tables are embedded in the main text and are not saved when rendering the document.
