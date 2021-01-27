@@ -55,7 +55,7 @@ by replacing `<RMarkdown_file>` with the name of the file to render and `<output
 
 It is important to note that the `html` documents are generated using `pandoc` package integrated with RStudio. In Debian/Linux systems the library can be found in `/usr/lib/rstudio/bin/pandoc/` and could differ from the version installed at system level. If, during the rendering of the document with `knitr`, you get a message like:
 
-```shell
+```
 Error: pandoc version 1.12.3 or higher is required and was not found (see the help page ?rmarkdown::pandoc_available).
 ```
 
