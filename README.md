@@ -22,10 +22,12 @@ The two main fodlers of the repository are called `SM` and `main` and refer to s
 
 2. `data` folder: contains data that is loaded into the R environment to generate figures and external scripts used for time-consuming tasks
     
-    <details>
+  <details>
      <summary><b>Show instructions</b></summary>
-    1. Install the preset:
-    2. Add the `size-limit` section and the `size` script to your `package.json`:
-    </details>
+  1. Install the preset
+    
+  2. Add the `size-limit` section and the `size` script to your `package.json`
+
+  </details>
 
 3. `tab` folder (SM only): supplementary tables are saved into this folder during `knitr` rendering of supplementary materials. Tables are embedded in the main text and are not saved when rendering the document.
