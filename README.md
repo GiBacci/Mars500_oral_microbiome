@@ -21,7 +21,7 @@ If you use code from this repo, please cite our paper as follows:
 }
 ```
 
-The project is part of the Mars500 mission, the first prolonged isolation experiment involving human volunteers conducted between 2007 and 2011 by three space agencies of different countries: Russia (Roscosmos), Europe (ESA), and China (CNSA). The mission was part of the European Programme for Life and Physical Sciences (ELIPS) with the aim of preparing astronauts for future missions to the Moon and Mars.
+This work is part of the Mars500 mission, the first prolonged isolation experiment involving human volunteers conducted between 2007 and 2011 by three space agencies of different countries: Russia (Roscosmos), Europe (ESA), and China (CNSA). The mission was part of the European Programme for Life and Physical Sciences (ELIPS) with the aim of preparing astronauts for future missions to the Moon and Mars.
 
 Details about the project can be found [here](https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Mars500/Mars500_study_overview)
 
@@ -33,15 +33,15 @@ The human microbiota plays several roles in health and disease but is often diff
 
 The two main folders of the repository are called `SM` and `main` and refer to supplementary materials and main text, respectively. The content of the folders is organised as follows:
 
-1. `img` folder: images generated during `knitr` rendering are saved into this folder in `png` format
+* `img` folder: images generated during `knitr` rendering are saved into this folder in `png` format
 
-2. `data` folder: contains data that is loaded into the R environment to generate figures and external scripts used for time-consuming tasks
+* `data` folder: contains data that is loaded into the R environment to generate figures and external scripts used for time-consuming tasks
 
-3. `tab` folder (SM only): supplementary tables are saved into this folder during `knitr` rendering of supplementary materials. Tables are embedded in the main text and are not saved when rendering the document.
+* `tab` folder (SM only): supplementary tables are saved into this folder during `knitr` rendering of supplementary materials. Tables are embedded in the main text and are not saved when rendering the document.
 
-4. `main/manuscript.Rmd`: R Markdown file for generating figures and table reported in the main manuscript
+* `main/manuscript.Rmd`: R Markdown file for generating figures and table reported in the main manuscript
 
-4. `SM/supplementary.Rmd`: R Markdown file for generating figures and table reported in supplementary materials
+* `SM/supplementary.Rmd`: R Markdown file for generating figures and table reported in supplementary materials
 
 ## Instructions
 
