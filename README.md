@@ -18,16 +18,20 @@ The human microbiota plays several roles in health and disease but is often diff
 
 The two main fodlers of the repository are called `SM` and `main` and refer to supplementary materials and main text, respectively. The content of the foldes is organised as follows:
 
-1. `img` folder: images generated during `knitr` rendering are saved into this folder in `png` format.
+1. `img` folder: images generated during `knitr` rendering are saved into this folder in `png` format
 
 2. `data` folder: contains data that is loaded into the R environment to generate figures and external scripts used for time-consuming tasks
-    
-    <details>
-     <summary><b>Details</b></summary>
-    1. `SM/data/cp` folder: contains the code used for change point analysis<br>
-    2. `SM/data/taxa` foder: contains the code for database comparison<br>
-    3. `SM/data/all_seqtab_nochim.rds`: ASV table without filtering<br>
-    4. `SM/data/phylo_obj.rds`: phyloseq object containing the final counts, metadat, and taxonoic assignments
-    </details>
 
 3. `tab` folder (SM only): supplementary tables are saved into this folder during `knitr` rendering of supplementary materials. Tables are embedded in the main text and are not saved when rendering the document.
+
+4. `main/manuscript.Rmd`: rmarkdown file for generating figures and table reported in the main manuscript
+
+4. `SM/supplementary.Rmd`: rmarkdown file for generating figures and table reported in supplementary materials
+
+The documents are generated using `pandoc` package integrated with `RStudio`. In Debian/Linux systems the library can be found in `/usr/lib/rstudio/bin/pandoc/` and could differ from the cersion installed at system level. If, during the rendering of the document with knitr, you get a message like:
+
+```
+Error: pandoc version 1.12.3 or higher is required and was not found (see the help page ?rmarkdown::pandoc_available).
+```
+
+then you probably need to tell `R` where the `pandoc` library integrated wit `RStudio` is. You can do this using the command `Sys.setenv(RSTUDIO_PANDOC='/usr/lib/rstudio/bin/pandoc/')` or using the two build scripts provided along with the markdown files.
