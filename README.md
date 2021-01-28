@@ -1,4 +1,4 @@
-# Mars500 Oral Microbiome [![Generic badge](https://img.shields.io/badge/Made_with-R_Markdown-blue.svg)](https://shields.io/)
+# Mars500 Oral Microbiome [![Generic badge](https://img.shields.io/badge/Made_with-R_Markdown-blue.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/github/license/gibacci/Mars500_oral_microbiome)](https://shields.io/)
 
 <img alt="Logo of the project «Mars-500».svg" src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Logo_of_the_project_%C2%ABMars-500%C2%BB.svg/170px-Logo_of_the_project_%C2%ABMars-500%C2%BB.svg.png" width="170" height="119" align="right">
 
@@ -59,4 +59,4 @@ It is important to note that the `html` documents are generated using `pandoc` p
 Error: pandoc version 1.12.3 or higher is required and was not found (see the help page ?rmarkdown::pandoc_available).
 ```
 
-then you probably need to tell `R` where the `pandoc` library integrated with RStudio is located in your system. You can do this with the command `Sys.setenv(RSTUDIO_PANDOC='/usr/lib/rstudio/bin/pandoc/')` or by using the two build scripts provided together with the markdown files.
+then you probably need to tell `R` where the `pandoc` library integrated with RStudio is located in your system. You can do this with the command `Sys.setenv(RSTUDIO_PANDOC='/usr/lib/rstudio/bin/pandoc/')` or by using the two build scripts provided together with the R Markdown files.
