@@ -215,7 +215,7 @@ plotCPS <- function(data, mapping, cps, model = F, alpha = 1/3){
 ## @knitr runCPanalysis
 
 # Loading data
-data <- readRDS("../../../main/data/phylo_obj.rds")
+data <- readRDS("../../../SM/data/phylo_obj.rds")
 
 # Lower bound cutoffs.
 # pers.cut : persistence cutoff (keep in more than)
