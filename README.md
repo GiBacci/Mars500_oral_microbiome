@@ -4,20 +4,23 @@
 
 This repository contains all the codes used to generate files and table reported in the work:
 
-Bacci et al. (2020) [Defining the resilience of the human salivary microbiota by a 520 days longitudinal study in confined environment: the Mars500 mission](https://www.biorxiv.org/content/10.1101/2020.04.08.031401v2) *bioRxiv*
+Bacci et al. (2021) [Defining the resilience of the human salivary microbiota by a 520 days longitudinal study in confined environment: the Mars500 mission](https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-021-01070-5) *Microbiome*
 
 If you use code from this repo, please cite our paper as follows:
 
 ```
-@article {Bacci2020.04.08.031401,
-	author = {Bacci, Giovanni and Mengoni, Alessio and Emiliani, Giovanni and Chiellini, Carolina and Cipriani, Edoardo Giovanni and Bianconi, Giovanna and Canganella, Francesco and Fani, Renato},
-	title = {Defining the resilience of the human salivary microbiota by a 520 days longitudinal study in confined environment: the Mars500 mission},
-	elocation-id = {2020.04.08.031401},
-	year = {2020},
-	doi = {10.1101/2020.04.08.031401},
-	publisher = {Cold Spring Harbor Laboratory},
-	eprint = {https://www.biorxiv.org/content/early/2020/05/12/2020.04.08.031401.full.pdf},
-	journal = {bioRxiv}
+﻿@article{Bacci2021,
+  author={Bacci, Giovanni and Mengoni, Alessio and Emiliani, Giovanni and Chiellini, Carolina and Cipriani, Edoardo Giovanni and Bianconi, Giovanna and Canganella, Francesco and Fani, Renato},
+  title={Defining the resilience of the human salivary microbiota by a 520-day longitudinal study in a confined environment: the Mars500 mission}, journal={Microbiome},
+  year={2021},
+  month={Jun},
+  day={30},
+  volume={9},
+  number={1},
+  pages={152},
+  issn={2049-2618},
+  doi={10.1186/s40168-021-01070-5},
+  url={https://doi.org/10.1186/s40168-021-01070-5}
 }
 ```
 
