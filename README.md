@@ -8,21 +8,21 @@ Bacci et al. (2021) [Defining the resilience of the human salivary microbiota by
 
 If you use code from this repo, please cite our paper as follows:
 
-```
-﻿@article{Bacci2021,
-	author={Bacci, Giovanni and Mengoni, Alessio and Emiliani, Giovanni and Chiellini, Carolina and Cipriani, Edoardo Giovanni and Bianconi, Giovanna and Canganella, Francesco and Fani, Renato},
-	title={Defining the resilience of the human salivary microbiota by a 520-day longitudinal study in a confined environment: the Mars500 mission}, 
-	journal={Microbiome},
-	year={2021},
-	month={Jun},
-	day={30},
-	volume={9},
-	number={1},
-	pages={152},
-	issn={2049-2618},
-	doi={10.1186/s40168-021-01070-5},
-	url={https://doi.org/10.1186/s40168-021-01070-5}
-}
+```BibTeX
+@article{Bacci2021.03.30.437674,
+  author = {Bacci, Giovanni and Mengoni, Alessio and Emiliani, Giovanni and Chiellini, Carolina and Cipriani, Edoardo Giovanni and Bianconi, Giovanna and Canganella, Francesco and Fani, Renato},
+  title = {Defining the resilience of the human salivary microbiota by a 520-day longitudinal study in a confined environment: the Mars500 mission},
+  year = {2021},
+  month = {Jun},
+  day = {30},
+  volume = {9},
+  number = {1},
+  pages = {152},
+  issn = {2049-2618},
+  doi = {10.1186/s40168-021-01070-5},
+  publisher = {Cold Spring Harbor Laboratory},	
+  URL = {https://doi.org/10.1186/s40168-021-01070-5},
+  journal = {Microbiome}}
 ```
 
 This work is part of the Mars500 mission, the first prolonged isolation experiment involving human volunteers conducted between 2007 and 2011 by three space agencies of different countries: Russia (Roscosmos), Europe (ESA), and China (CNSA). The mission was part of the European Programme for Life and Physical Sciences (ELIPS) with the aim of preparing astronauts for future missions to the Moon and Mars.
