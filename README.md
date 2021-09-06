@@ -9,7 +9,7 @@ Bacci et al. (2021) [Defining the resilience of the human salivary microbiota by
 If you use code from this repo, please cite our paper as follows:
 
 ```BibTeX
-@article{Bacci2021.03.30.437674,
+@article{Bacci2021,
   author = {Bacci, Giovanni and Mengoni, Alessio and Emiliani, Giovanni and Chiellini, Carolina and Cipriani, Edoardo Giovanni and Bianconi, Giovanna and Canganella, Francesco and Fani, Renato},
   title = {Defining the resilience of the human salivary microbiota by a 520-day longitudinal study in a confined environment: the Mars500 mission},
   year = {2021},
